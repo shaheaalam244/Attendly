@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <rect width="512" height="512" rx="115" fill="#16A34A"/>
+  <circle cx="256" cy="256" r="210" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="6" stroke-dasharray="14 14"/>
+  <!-- Location Pin Silhouette -->
+  <path d="M256 88C178.68 88 116 150.68 116 228C116 324.5 234.5 415.2 246.2 424.0C252.0 428.4 260.0 428.4 265.8 424.0C277.5 415.2 396 324.5 396 228C396 150.68 333.32 88 256 88Z" fill="#FFFFFF"/>
+  <!-- Inner Badge Circle -->
+  <circle cx="256" cy="224" r="88" fill="#166534"/>
+  <!-- Crisp Geometric Checkmark -->
+  <path d="M218 225L244 251L298 197" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

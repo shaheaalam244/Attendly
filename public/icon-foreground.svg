@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432" fill="none">
+  <!-- Android Adaptive Icon Foreground (Safe zone: central 66% / 288px circle) -->
+  <path d="M216 102C160.77 102 116 146.77 116 202C116 271.0 200.6 335.8 209.0 342.1C213.1 345.2 218.9 345.2 223.0 342.1C231.4 335.8 316 271.0 316 202C316 146.77 271.23 102 216 102Z" fill="#FFFFFF"/>
+  <circle cx="216" cy="199" r="64" fill="#166534"/>
+  <path d="M188 200L207 219L246 180" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

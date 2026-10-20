@@ -1,0 +1,6 @@
+{
+  "name": "Attendly",
+  "description": "Automatic College Attendance Tracker that verifies student campus presence using geofencing and 30-minute reliable location evidence.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

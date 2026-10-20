@@ -1,0 +1,862 @@
+# MASTER DEVELOPMENT PROMPT — Automatic College Attendance Tracker
+
+## ROLE
+
+Act as a senior full-stack mobile engineer, React Native/Expo specialist, Android background-location engineer, Node.js backend architect, MongoDB database engineer, UI/UX designer, security engineer, and QA engineer.
+
+Build a complete, production-ready Android mobile application that automatically records a student's college attendance using geofencing and reliable background location evidence.
+
+Do not create only a UI prototype or demo. Implement the complete frontend, backend, database, authentication, location detection, attendance engine, calendar, reports, error handling, and deployment configuration.
+
+Work autonomously within the existing project architecture. Make reasonable technical decisions without repeatedly asking for confirmation. Never fabricate successful test results or claim that untested functionality works.
+
+---
+
+# 1. PRODUCT OBJECTIVE
+
+Create a mobile application called **CampusTrack — Automatic College Attendance**.
+
+The application's main purpose is to help students automatically remember and count the days they attended college.
+
+The student should configure their college location once. Whenever the student enters the configured college area and remains there for the required duration, the app should automatically verify their presence and record attendance for that date.
+
+The student must be able to:
+
+- See whether today's attendance is pending, present, absent, or unverified.
+- View previous attendance records in a monthly calendar.
+- Calculate monthly and semester-wise attendance percentages.
+- View total present days, absent days, holidays, and eligible working days.
+- See detected arrival time, verified duration, and last synchronization time.
+- Configure college location, working hours, radius, and attendance threshold.
+- Pause and resume automatic tracking.
+- Review uncertain attendance records and correct eligible mistakes.
+- Export attendance reports.
+- Manage privacy, permissions, and account deletion.
+
+This application is a personal attendance-tracking assistant. Do not represent GPS presence as official proof of classroom attendance or claim that it integrates with the college's official attendance system.
+
+# 2. REQUIRED TECHNOLOGY STACK
+
+## Android mobile application
+
+- React Native.
+- Expo with TypeScript.
+- Expo development build and EAS Build.
+- expo-location.
+- expo-task-manager.
+- expo-secure-store.
+- expo-sqlite for persistent offline event queues.
+- React Navigation.
+- Zustand for application state.
+- React Hook Form and Zod for form validation.
+- A maintained React Native calendar component or a custom accessible calendar.
+- Native Android geofencing or an appropriate background-location implementation where needed.
+
+Use compatible, stable package versions. Check the existing package configuration before upgrading dependencies.
+
+Do not depend on Expo Go for production background-location functionality. Use a custom development build and test on physical Android devices.
+
+## Backend
+
+- Node.js LTS.
+- Express.js.
+- TypeScript.
+- MongoDB Atlas.
+- Mongoose.
+- JWT access tokens and secure refresh-token rotation.
+- Zod or an equivalent request-validation library.
+- Argon2id or appropriately configured bcrypt for password hashing.
+- Helmet, rate limiting, structured logging, and centralized error handling.
+- Jest or Vitest with Supertest for backend tests.
+
+## Deployment
+
+- Ubuntu VPS.
+- Nginx reverse proxy.
+- PM2 or a suitable process manager.
+- HTTPS using a valid TLS certificate.
+- MongoDB Atlas with restricted network access.
+- EAS Build for Android release builds.
+- Git-based version control and CI/CD.
+
+# 3. PROJECT INITIALIZATION
+
+First inspect the existing project structure, dependencies, environment configuration, and implementation.
+
+If a project already exists:
+- Preserve its architecture and working features.
+- Reuse existing components and utilities when appropriate.
+- Make focused changes rather than rewriting unrelated modules.
+- Do not overwrite working configuration files without checking their purpose.
+
+If no project exists, create a clean monorepo:
+
+campus-track/
+  mobile/
+  backend/
+  docs/
+  .gitignore
+  README.md
+
+Use separate development and production configurations.
+
+Provide:
+- `.env.example` files containing placeholders only.
+- Installation instructions.
+- Database setup instructions.
+- Google Maps API configuration instructions.
+- Android permission setup.
+- Local development commands.
+- Production deployment instructions.
+- Testing commands.
+- A clear explanation of every required external credential.
+
+Never invent API keys, credentials, live database connection strings, signing keys, or deployment secrets.
+
+# 4. COLLEGE LOCATION SETUP
+
+Create an onboarding flow that allows the user to:
+
+1. Register and log in.
+2. Search for their college by name or address.
+3. Select the correct college location using Google Maps.
+4. Adjust the college pin if necessary.
+5. Configure the geofence radius.
+6. Configure college working hours and working days.
+7. Configure the attendance confirmation threshold.
+8. Review location permissions and enable automatic tracking.
+9. See a successful setup confirmation only after configuration is actually saved.
+
+Default configuration:
+
+- Geofence radius: 150 metres.
+- College opening time: 9:00 AM.
+- College closing time: 5:00 PM.
+- Minimum verified presence: 30 minutes.
+- Preferred verification target: up to 60 minutes when evidence is incomplete or unreliable.
+- Timezone: Asia/Kolkata by default, configurable for the selected college.
+- Working days: Monday through Saturday by default, configurable.
+- Holidays: managed through a configurable college calendar.
+- Attendance per student per date: maximum one record.
+
+These are configurable defaults, not universal college rules.
+
+Display a map preview, location name, address, selected radius, and working hours.
+
+Allow the user to update the configured location later. Explain that changing the college location should not silently modify historical attendance records.
+
+# 5. AUTOMATIC BACKGROUND LOCATION TRACKING
+
+This is the application's most important feature.
+
+Implement a real Android background-location system that can detect whether the phone enters, remains inside, or exits the configured college geofence.
+
+Use native-compatible background location APIs, Expo TaskManager, and geofencing where appropriate.
+
+The application must:
+
+- Request foreground location permission first.
+- Explain the reason for background location access before requesting it.
+- Request background access through the appropriate Android permission flow.
+- Configure the required Android manifest permissions.
+- Configure a suitable location foreground service when required by the chosen implementation and Android version.
+- Display a persistent and truthful tracking status.
+- Stop location tracking when the user pauses or disables it.
+- Detect permission revocation and location services being disabled.
+- Handle app process termination, restart, device reboot, network loss, and battery restrictions as far as the platform permits.
+- Recover tracking state without creating duplicate attendance.
+- Avoid continuous high-accuracy GPS polling when unnecessary.
+- Avoid excessive geocoding requests and unnecessary network calls.
+- Store pending events locally when offline and sync them later.
+- Provide diagnostics explaining when tracking is unavailable.
+
+Do not claim guaranteed uninterrupted tracking. Android background execution restrictions, manufacturer battery controls, force-stop behavior, permissions, and delayed geofence events can affect detection.
+
+Implement and document the recovery behavior for each supported failure case.
+
+# 6. ATTENDANCE VERIFICATION ENGINE
+
+Implement a dedicated, testable attendance-verification service. Do not put the entire attendance algorithm inside a React component or a background task.
+
+## Core rule
+
+A student becomes eligible for automatic PRESENT attendance after sufficiently reliable evidence confirms that the phone remained within the configured college area for at least 30 minutes.
+
+The system may continue observing for up to 60 minutes when necessary to obtain sufficient evidence.
+
+Do not count an unverified 30-minute gap between two timestamps as confirmed presence.
+
+## Verification procedure
+
+1. Receive a geofence entry event or a relevant location update.
+2. Validate its timestamp, accuracy, coordinates, and event identifier.
+3. Determine whether the observation is consistent with the configured college geofence.
+4. Start a pending presence session.
+5. Collect additional valid observations through the permitted background-location mechanism.
+6. Calculate verified presence intervals using valid observations and a configurable maximum evidence gap.
+7. Exclude large unexplained gaps, inaccurate readings, duplicate events, and clearly inconsistent observations.
+8. Accumulate verified presence duration.
+9. When at least 30 minutes of qualifying evidence has accumulated, mark the date eligible for PRESENT attendance.
+10. Submit the event to the backend for authoritative validation and idempotent record creation.
+11. Update the local interface after the backend confirms the result.
+12. If evidence is insufficient, retain a pending or unverified status instead of fabricating attendance.
+
+Use a configurable initial accuracy target, such as 50 metres, with a documented fallback strategy for poor GPS conditions. Tune the actual accuracy threshold and evidence-gap policy through physical-device testing.
+
+Treat geofence events as signals rather than conclusive proof.
+
+## Working hours
+
+Use the configured college schedule to evaluate attendance.
+
+Default hours are 9:00 AM to 5:00 PM.
+
+- A visit beginning during eligible college hours can qualify for automatic attendance.
+- A visit outside the configured window must follow an explicit configurable policy.
+- Do not mark attendance solely because the phone passed through the college area.
+- Prevent duplicate attendance if the student exits and re-enters the geofence on the same day.
+- Use the college's configured timezone when calculating attendance dates.
+- Handle midnight crossings and daylight-saving transitions correctly if a different timezone is selected.
+
+## Presence interruptions
+
+If the phone exits the geofence:
+- Close the current confirmed observation interval.
+- Do not continue accumulating presence time while outside the area.
+- Allow re-entry to resume a session according to the configured policy.
+- Do not reset previously verified intervals unnecessarily.
+- Do not bridge long periods without reliable evidence.
+
+Keep the verification algorithm deterministic and unit-testable.
+
+# 7. ATTENDANCE STATES
+
+Support these states:
+
+- NOT_DETECTED
+- PENDING
+- PRESENT
+- ABSENT
+- HOLIDAY
+- UNKNOWN
+- NEEDS_REVIEW
+
+Rules:
+
+PRESENT:
+The configured presence-verification threshold has been satisfied and the backend has accepted the attendance record.
+
+PENDING:
+The system is still collecting sufficient evidence.
+
+ABSENT:
+A configured working day has ended without qualifying attendance, and the applicable tracking-health and evidence policy permits an absence classification.
+
+HOLIDAY:
+The date is a configured holiday or non-working day.
+
+UNKNOWN:
+Tracking was unavailable, permissions were missing, evidence was insufficient, or the system cannot confidently determine attendance.
+
+NEEDS_REVIEW:
+The available evidence conflicts or a correction requires review.
+
+Never silently convert an unknown date into a confirmed absence.
+
+Do not classify future dates as absent.
+
+At the end of a working day, evaluate unresolved attendance through a scheduled backend job or a reliable reconciliation process. Ensure the process is idempotent.
+
+# 8. FRONTEND SCREENS
+
+Build a complete, polished, responsive mobile interface.
+
+## A. Splash and onboarding
+
+- Application logo and name.
+- Brief explanation of automatic attendance.
+- Privacy explanation.
+- Login and signup navigation.
+
+## B. Authentication
+
+- Registration.
+- Login.
+- Forgot-password flow.
+- Secure session restoration.
+- Logout.
+- Clear validation and error messages.
+
+Implement password reset through a configured email provider. Do not pretend that password reset works when the required provider is not configured.
+
+## C. Home dashboard
+
+Display:
+- Today's attendance status.
+- College name.
+- Tracking enabled/disabled status.
+- Current verification progress.
+- Verified presence duration.
+- First confirmed arrival time, when available.
+- Last successful synchronization time.
+- Current month present count.
+- Current month eligible working days.
+- Current attendance percentage.
+- Quick action to open the calendar.
+- Quick action to view the monthly report.
+
+Do not display a fabricated live attendance status. Derive the UI from actual application and backend state.
+
+## D. Monthly attendance calendar
+
+Create a calendar with:
+- Present dates marked green.
+- Absent dates marked red.
+- Holidays marked separately.
+- Pending dates marked amber.
+- Unknown dates marked grey.
+- Clear labels in addition to colors.
+- Previous-month and next-month navigation.
+- Month and year selection.
+- A detail view when a date is selected.
+
+The selected date should show:
+- Attendance status.
+- First confirmed arrival.
+- Last confirmed observation.
+- Verified presence duration.
+- Relevant tracking warnings.
+- Whether the record was manually corrected.
+
+## E. Attendance history
+
+Provide:
+- Chronological attendance list.
+- Date filters.
+- Month filters.
+- Status filters.
+- Pagination.
+- Empty states.
+- Offline and error states.
+
+## F. Reports
+
+Provide monthly and semester-style summaries.
+
+Calculate:
+
+Attendance percentage =
+Present eligible working days / Total eligible working days × 100
+
+Exclude holidays, non-working days, future dates, and unknown dates from the denominator.
+
+Display:
+- Present days.
+- Absent days.
+- Holidays.
+- Unknown days.
+- Eligible working days.
+- Attendance percentage.
+- Arrival-time summaries when data is available.
+
+If the denominator is zero, display “No eligible working days” rather than dividing by zero.
+
+Support CSV export and a shareable PDF report if implemented using a suitable maintained library.
+
+## G. Settings
+
+Include:
+- College name and location.
+- Map pin and geofence radius.
+- College working hours.
+- Working days.
+- Holidays.
+- Attendance threshold.
+- Timezone.
+- Tracking pause/resume.
+- Permission status.
+- Data retention preferences.
+- Export attendance data.
+- Delete an individual record where permitted.
+- Delete account and associated data.
+- Privacy policy and support information.
+
+# 9. UI/UX REQUIREMENTS
+
+Use a clean, modern academic productivity design.
+
+Visual direction:
+- Light background.
+- Dark, readable text.
+- Green for Present.
+- Red for Absent.
+- Amber for Pending.
+- Grey for Unknown.
+- Subtle neutral borders.
+- Consistent spacing and typography.
+- Rounded cards used sparingly.
+- Accessible touch targets.
+- Readable text at Android display sizes.
+- Clear status labels, not color alone.
+- Loading skeletons or appropriate loading indicators.
+- Empty states, retry actions, and meaningful error messages.
+
+Avoid excessive gradients, excessive animation, cluttered dashboards, and unnecessary decorative elements.
+
+The application must feel like a practical attendance utility, not a generic admin dashboard.
+
+# 10. BACKEND ARCHITECTURE
+
+Implement a modular Express application.
+
+Recommended structure:
+
+backend/src/
+  config/
+  models/
+  routes/
+  controllers/
+  services/
+  middleware/
+  validators/
+  jobs/
+  utils/
+  app.ts
+  server.ts
+
+Separate:
+- Authentication.
+- College configuration.
+- Location-event ingestion.
+- Attendance verification.
+- Daily attendance reconciliation.
+- Calendar and holiday management.
+- Reporting and exports.
+- Privacy and data deletion.
+
+Use asynchronous error handling and centralized error middleware.
+
+Use appropriate HTTP status codes and a consistent response format.
+
+Validate all request bodies, query parameters, path parameters, and date values.
+
+Implement API versioning with `/api/v1`.
+
+Provide:
+- `/health` endpoint.
+- Structured logging with sensitive-data redaction.
+- Graceful shutdown.
+- Database connection handling.
+- Rate limiting.
+- Request size limits.
+- CORS restrictions.
+- Production environment validation.
+
+# 11. REQUIRED API ENDPOINTS
+
+Authentication:
+- POST `/api/v1/auth/register`
+- POST `/api/v1/auth/login`
+- POST `/api/v1/auth/refresh`
+- POST `/api/v1/auth/logout`
+- POST `/api/v1/auth/forgot-password`
+- POST `/api/v1/auth/reset-password`
+- GET `/api/v1/auth/me`
+
+College configuration:
+- GET `/api/v1/colleges/search`
+- GET `/api/v1/college-settings`
+- PATCH `/api/v1/college-settings`
+
+Tracking:
+- GET `/api/v1/tracking/status`
+- PATCH `/api/v1/tracking/settings`
+- POST `/api/v1/attendance/sync`
+
+Attendance:
+- GET `/api/v1/attendance/today`
+- GET `/api/v1/attendance/monthly`
+- GET `/api/v1/attendance/history`
+- GET `/api/v1/attendance/:date`
+- POST `/api/v1/attendance/:date/correction-request`
+- GET `/api/v1/attendance/export`
+
+Calendar:
+- GET `/api/v1/calendar/:year/:month`
+- GET `/api/v1/holidays`
+- POST `/api/v1/holidays`
+- DELETE `/api/v1/holidays/:id`
+
+Privacy:
+- GET `/api/v1/privacy/settings`
+- PATCH `/api/v1/privacy/settings`
+- DELETE `/api/v1/account`
+
+Validate the actual user's permissions for every route. Never allow one user to read, modify, or delete another user's records.
+
+If holiday-management endpoints are intended for personal use, restrict them to the authenticated user's own calendar. If shared college calendars are implemented, introduce explicit administrator roles and authorization checks.
+
+# 12. DATABASE MODELS
+
+Use MongoDB Atlas and Mongoose.
+
+## Users
+
+Fields:
+- name
+- email
+- passwordHash
+- timezone
+- collegeId
+- trackingEnabled
+- privacySettings
+- createdAt
+- updatedAt
+
+## CollegeSettings
+
+Fields:
+- userId or authorized college identifier
+- collegeName
+- latitude
+- longitude
+- radiusMeters
+- workingDays
+- startTime
+- endTime
+- timezone
+- minimumVerifiedMinutes
+- maximumVerificationWindowMinutes
+- createdAt
+- updatedAt
+
+Keep college coordinates private and expose them only to authorized users.
+
+## AttendanceRecords
+
+Fields:
+- userId
+- collegeId
+- attendanceDate
+- status
+- firstConfirmedAt
+- lastConfirmedAt
+- verifiedDurationSeconds
+- detectionMethod
+- correctionStatus
+- createdAt
+- updatedAt
+
+Create a unique compound index on `{ userId: 1, attendanceDate: 1 }`.
+
+## LocationEvents
+
+Fields:
+- userId
+- eventId
+- eventType
+- observedAt
+- accuracyMeters
+- processingStatus
+- processedAt
+- retention metadata
+
+Create a unique compound index on `{ userId: 1, eventId: 1 }`.
+
+Avoid permanent storage of unnecessary raw coordinates. If coordinates are required to validate a geofence event, retain only what is necessary for the documented purpose and retention period.
+
+## Holidays
+
+Fields:
+- collegeId or userId
+- date
+- name
+- holidayType
+- createdAt
+
+Use appropriate indexes for all frequently queried fields.
+
+Use MongoDB transactions where supported and necessary. Otherwise, design idempotent operations that remain safe under retries.
+
+# 13. AUTHENTICATION AND SECURITY
+
+Implement:
+- Secure password hashing.
+- Short-lived JWT access tokens.
+- Rotating refresh tokens.
+- Refresh-token revocation on logout.
+- Secure mobile token storage.
+- Server-side authorization.
+- Request validation.
+- Rate limiting.
+- Helmet.
+- Restricted CORS.
+- Protection against NoSQL injection.
+- Secure error responses.
+- Environment-based secrets.
+- Database connection restrictions.
+- Audit records for sensitive attendance corrections.
+- User account deletion and data retention handling.
+
+Never store passwords or refresh tokens in plaintext.
+
+Never place server-side API secrets in the mobile bundle.
+
+Do not log precise location coordinates, passwords, tokens, or sensitive personal data.
+
+Implement privacy controls so users can understand, pause, export, and delete their attendance data.
+
+# 14. LOCATION EVENT INGESTION AND ANTI-DUPLICATION
+
+Every location event should have a stable, client-generated UUID.
+
+The backend must:
+1. Authenticate the user.
+2. Validate the event schema.
+3. Check whether the event was already processed.
+4. Validate the timestamp and relevant evidence.
+5. Evaluate the event against the configured college geofence and attendance rules.
+6. Update the attendance-verification session.
+7. Create or update the daily attendance record idempotently.
+8. Record processing status.
+9. Return the authoritative result.
+
+Handle duplicate uploads, out-of-order events, delayed uploads, app restarts, and network retries.
+
+Use server receipt time and validated event metadata to detect suspicious timestamps. Device timestamps are not inherently trustworthy.
+
+Do not treat a client-provided attendance status as proof of presence.
+
+Do not claim that GPS geofencing is impossible to spoof. Document that this is a best-effort personal attendance system and that location alone cannot prove physical classroom participation.
+
+# 15. MONTHLY REPORTING AND ABSENCE CALCULATION
+
+Implement a deterministic monthly attendance service.
+
+For each calendar date:
+1. Determine whether it is a working day.
+2. Check whether it is a holiday.
+3. Retrieve the attendance record.
+4. Determine whether the date is in the past, today, or the future.
+5. Evaluate tracking-health information when available.
+6. Return the appropriate attendance state.
+
+Rules:
+- Holidays never count as absent.
+- Non-working days never count as absent.
+- Future dates are not classified as absent.
+- Unknown dates are excluded from the attendance percentage denominator.
+- Pending dates remain pending until the defined cutoff or reconciliation policy applies.
+- Absent should only be assigned when the system has sufficient grounds to conclude that no qualifying attendance was recorded.
+- Historical data should remain unchanged when college settings are modified, unless an explicit recalculation is requested.
+
+Support month navigation, calendar summaries, and semester-style reports.
+
+# 16. OFFLINE SUPPORT
+
+Implement a persistent local event queue.
+
+Requirements:
+- Save eligible pending events locally.
+- Retry sync when connectivity returns.
+- Use stable event IDs.
+- Avoid duplicate attendance after retries.
+- Track upload and processing status.
+- Handle expired sessions safely.
+- Avoid deleting unsynced events prematurely.
+- Clear sensitive local data on logout according to the documented session policy.
+- Explain when attendance cannot yet be confirmed because events have not synchronized.
+
+Do not fabricate server confirmation while offline.
+
+# 17. GOOGLE MAPS INTEGRATION
+
+Use Google Maps Platform only for features that genuinely require it.
+
+The college location can be selected using a map or search interface.
+
+If reverse geocoding is used, follow the current Google Maps Platform terms for storage and caching.
+
+Configure API keys with appropriate restrictions. Use separate credentials for mobile map rendering and server-side services where appropriate.
+
+Do not invent API keys or assume billing is enabled.
+
+Provide a documented fallback for manually entering coordinates or selecting a location if map search is temporarily unavailable.
+
+# 18. AUTOMATED TESTING
+
+Write real automated tests.
+
+## Backend unit tests
+
+- Attendance percentage calculations.
+- Working-day calculations.
+- Holiday exclusion.
+- Timezone handling.
+- Minimum presence threshold.
+- Maximum evidence-gap handling.
+- Duplicate event handling.
+- Duplicate daily attendance prevention.
+- Unknown versus absent classification.
+- Invalid timestamp rejection.
+- Invalid coordinates and accuracy handling.
+
+## API integration tests
+
+- Registration and login.
+- Unauthorized access rejection.
+- Cross-user access rejection.
+- Location event synchronization.
+- Duplicate event synchronization.
+- Monthly attendance retrieval.
+- Attendance correction authorization.
+- Holiday creation and deletion.
+- Account deletion.
+- Invalid payload handling.
+- Rate limiting.
+
+## Mobile tests
+
+- Permission onboarding.
+- Permission denial and recovery.
+- Tracking pause/resume.
+- Offline queue behavior.
+- Calendar navigation.
+- Monthly report rendering.
+- Loading and error states.
+- Session expiration.
+- Location event processing.
+
+## Physical-device test scenarios
+
+Test on actual Android devices for:
+- App in foreground.
+- App in background.
+- Screen locked.
+- App process terminated.
+- Device reboot.
+- GPS disabled.
+- Battery saver enabled.
+- Background permission revoked.
+- Weak GPS accuracy.
+- Network unavailable.
+- Delayed location events.
+- Entering and exiting the geofence.
+- Staying inside the college area for less than 30 minutes.
+- Staying inside for 30 minutes or more.
+- Leaving and returning on the same date.
+
+Use deterministic fixtures for automated tests. Do not fabricate real-world location data or claim physical-device tests passed unless they were actually run.
+
+# 19. PRODUCTION DEPLOYMENT
+
+Prepare deployment instructions for an Ubuntu VPS.
+
+Configure:
+- Node.js LTS.
+- Production environment variables.
+- MongoDB Atlas connection.
+- Nginx reverse proxy.
+- HTTPS.
+- PM2 process management.
+- Application logs.
+- Health checks.
+- Database indexes.
+- Backup and recovery.
+- Monitoring.
+- Rate limits.
+- Secure server firewall.
+- Controlled deployment and rollback.
+
+Use a configurable API base URL rather than hardcoding development URLs in the app.
+
+Prepare EAS Build configuration and Android release settings.
+
+Generate a signed Android App Bundle only when the required signing credentials are available.
+
+Do not commit keystores, passwords, or service credentials.
+
+Provide Google Play release guidance covering background-location permissions, privacy policy, Data safety disclosures, and any required background-location declaration or review.
+
+Do not claim Play Store approval before it has actually been granted.
+
+# 20. DOCUMENTATION
+
+Create:
+- `README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/LOCATION_PERMISSIONS.md`
+- `docs/ATTENDANCE_ALGORITHM.md`
+- `docs/API.md`
+- `docs/DATABASE.md`
+- `docs/DEPLOYMENT.md`
+- `docs/PRIVACY.md`
+- `docs/TESTING.md`
+
+Include setup instructions, architecture decisions, environment variables, permission requirements, known limitations, troubleshooting steps, and release procedures.
+
+# 21. IMPLEMENTATION WORKFLOW
+
+Follow this sequence:
+
+Phase 1: Inspect the repository and establish the project structure.
+
+Phase 2: Implement backend configuration, authentication, database models, validation, and API routes.
+
+Phase 3: Implement the location-event ingestion service and deterministic attendance-verification engine.
+
+Phase 4: Implement Android background location, geofencing, permission handling, and persistent offline sync.
+
+Phase 5: Build the dashboard, calendar, history, reports, settings, and privacy screens.
+
+Phase 6: Integrate frontend and backend end-to-end.
+
+Phase 7: Add automated tests, security checks, and realistic failure handling.
+
+Phase 8: Prepare deployment and Android release documentation.
+
+After each phase, run only the relevant targeted checks. Avoid unnecessary repeated full builds, opening unrelated applications, and repetitive inspection of files that have not changed.
+
+Do not spend excessive time running redundant tests. Prioritize tests that validate actual functionality, security, and integration.
+
+Do not disable necessary validation or skip critical security checks just to finish faster.
+
+If a command fails, inspect the actual error, fix the underlying issue, and rerun the relevant check.
+
+Do not ask for confirmation for routine implementation decisions. Ask only when a decision genuinely requires unavailable credentials, external authorization, or a choice that materially changes product behavior.
+
+Never silently replace a real backend integration with mock data. If an external credential is unavailable, implement the integration correctly, document the required configuration, and provide an explicit unavailable/configuration-required state.
+
+# 22. DEFINITION OF DONE
+
+The project is complete only when:
+
+- A user can register, log in, and configure a college location.
+- The Android app requests and handles location permissions correctly.
+- Background location and geofencing are integrated using an appropriate development build.
+- Presence verification follows the configured 30-minute minimum rule.
+- Unreliable or missing evidence cannot automatically produce a falsely confirmed PRESENT result.
+- Attendance records are saved in MongoDB through the real backend.
+- Daily attendance duplication is prevented at the database level.
+- The calendar shows actual stored attendance.
+- Monthly and semester-style reports use correct working-day calculations.
+- Holidays and unknown dates are handled correctly.
+- Offline events can synchronize without duplicate records.
+- Users can pause tracking and manage their data.
+- Authorization and security tests pass.
+- Relevant automated tests pass.
+- The application builds successfully in the available development environment.
+- Physical-device testing is documented honestly.
+- Production deployment and release instructions are complete.
+
+At the end, provide a concise implementation report containing:
+1. Features implemented.
+2. Files and modules created or modified.
+3. API endpoints implemented.
+4. Database indexes and models created.
+5. Tests actually executed and their results.
+6. Any remaining blockers or required credentials.
+7. Exact commands to run the mobile app and backend.
+8. Exact steps to build and deploy the production version.
+
+**FINAL INSTRUCTION:** Build the complete integrated application, not merely a plan, UI mockup, or code snippets. Prioritize reliable attendance detection, correct historical records, privacy, and maintainable production architecture. Be transparent about anything that still requires real-device verification or external configuration.

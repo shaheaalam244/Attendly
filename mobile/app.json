@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Attendly",
+    "slug": "attendly",
+    "version": "1.2.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F8FAFC"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.campustrack.attendly",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Attendly uses your location while you are on campus to detect when you arrive at your configured college.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Attendly uses background geofencing so your college attendance is automatically verified after 30 minutes of campus presence without opening the app."
+      }
+    },
+    "android": {
+      "package": "com.campustrack.attendly",
+      "versionCode": 4,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
+        "backgroundImage": "./assets/adaptive-icon-background.png",
+        "backgroundColor": "#16A34A"
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Attendly to detect when your phone remains inside your configured college geofence for at least 30 minutes to automatically record daily attendance.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "expo-secure-store",
+      "expo-sqlite"
+    ],
+    "extra": {
+      "brand": {
+        "appName": "Attendly",
+        "tagline": "You Go to College. We Track Your Attendance.",
+        "shortTagline": "Your Attendance, Automatically."
+      },
+      "eas": {
+        "projectId": "attendly-production-release-config"
+      }
+    }
+  }
+}
