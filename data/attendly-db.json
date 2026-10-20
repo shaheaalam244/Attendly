@@ -9,7 +9,7 @@
       "semester": "Autumn 2026 (Sem V)",
       "passwordHash": "scrypt$1c8f6e82fc03fb66fb14fc62885ae370$11a1cac5316492d9a3ab049f839264247d789f0f1472ef34f4a938cbc4aaf31d0223b7098de1275b46feceec3332faf886eb535923821a50aac13a68072c0594",
       "timezone": "Asia/Kolkata",
-      "collegeId": "col_iitb",
+      "collegeId": "col_coep",
       "trackingEnabled": true,
       "permissionStatus": "GRANTED_ALWAYS",
       "lastSyncedAt": "2026-10-19T03:30:00.000Z",
@@ -20,18 +20,18 @@
         "consentUpdatedAt": "2026-08-01T04:00:00.000Z"
       },
       "createdAt": "2026-08-01T04:00:00.000Z",
-      "updatedAt": "2026-10-19T04:05:00.000Z"
+      "updatedAt": "2026-10-20T06:23:14.290Z"
     }
   ],
   "collegeSettings": [
     {
       "userId": "usr_demo_aarav",
-      "collegeId": "col_iitb",
-      "collegeName": "Indian Institute of Technology Bombay",
-      "address": "Main Gate Rd, IIT Area, Powai, Mumbai, Maharashtra 400076",
-      "latitude": 19.1334,
-      "longitude": 72.9133,
-      "radiusMeters": 150,
+      "collegeId": "col_coep",
+      "collegeName": "COEP Technological University Pune",
+      "address": "Wellesley Rd, Shivajinagar, Pune, Maharashtra 411005",
+      "latitude": 18.5293,
+      "longitude": 73.8565,
+      "radiusMeters": 400,
       "workingDays": [
         1,
         2,
@@ -49,7 +49,23 @@
       "maxAccuracyMeters": 50,
       "outsideHoursPolicy": "IGNORE",
       "createdAt": "2026-08-01T04:00:00.000Z",
-      "updatedAt": "2026-10-19T04:05:00.000Z"
+      "updatedAt": "2026-10-20T06:23:14.290Z",
+      "locationHistory": [
+        {
+          "id": "loc_hist_0b00f14c",
+          "collegeId": "col_coep",
+          "collegeName": "COEP Technological University Pune",
+          "campusLabel": "North & South Academic Campus",
+          "address": "Wellesley Rd, Shivajinagar, Pune, Maharashtra 411005",
+          "latitude": 18.5293,
+          "longitude": 73.8565,
+          "radiusMeters": 400,
+          "locationSource": "SEARCH_PLACE",
+          "savedAt": "2026-10-20T06:23:14.290Z"
+        }
+      ],
+      "campusLabel": "North & South Academic Campus",
+      "locationSource": "SEARCH_PLACE"
     }
   ],
   "attendanceRecords": [
@@ -731,6 +747,13 @@
   ],
   "revokedRefreshTokenHashes": [],
   "auditLogs": [
+    {
+      "id": "28192296-1262-4343-9a39-823e13bbc2cb",
+      "userId": "usr_demo_aarav",
+      "action": "COLLEGE_SETTINGS_UPDATED",
+      "details": "Updated college geofence (COEP Technological University Pune, 18.5293°N 73.8565°E, radius 400m, threshold 30m). Historical records preserved.",
+      "createdAt": "2026-10-20T06:23:14.290Z"
+    },
     {
       "id": "c42e9eae-253f-422d-82b2-eb5434f1c7bd",
       "userId": "usr_demo_aarav",

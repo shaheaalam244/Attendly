@@ -1,17 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  Compass,
   Download,
+  History,
   Lock,
   MapPin,
   PauseCircle,
   PlayCircle,
+  RotateCcw,
   Save,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
 import {
   KNOWN_COLLEGES_DIRECTORY,
+  evaluateGoogleMapsConfigStatus,
   type CollegeConfig,
 } from '../engine/attendanceEngine';
 import { type AuditLogEntry, type StudentUser } from '../store/useAttendlyStore';
@@ -23,6 +27,8 @@ interface SettingsAndPrivacyViewProps {
   auditLogs: AuditLogEntry[];
   storedEventsCount: number;
   onSaveCollegeSettings: (patch: Partial<CollegeConfig>) => Promise<boolean>;
+  onOpenMapPicker: () => void;
+  onRestoreLocationHistory: (historyId: string) => Promise<boolean>;
   onToggleTracking: (enabled: boolean) => Promise<void>;
   onUpdatePermissionStatus: (
     status: 'GRANTED_ALWAYS' | 'GRANTED_FOREGROUND' | 'DENIED' | 'NOT_DETERMINED'
@@ -54,6 +60,8 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
   auditLogs,
   storedEventsCount,
   onSaveCollegeSettings,
+  onOpenMapPicker,
+  onRestoreLocationHistory,
   onToggleTracking,
   onUpdatePermissionStatus,
   onUpdatePrivacy,
@@ -76,6 +84,20 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
   const [timezone, setTimezone] = useState(college.timezone);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
+  // Sync local form fields whenever college prop updates from Interactive Map Picker or Restore
+  useEffect(() => {
+    setCollegeName(college.collegeName);
+    setAddress(college.address);
+    setLatitude(String(college.latitude));
+    setLongitude(String(college.longitude));
+    setRadiusMeters(college.radiusMeters);
+    setStartTime(college.startTime);
+    setEndTime(college.endTime);
+    setWorkingDays(college.workingDays);
+    setMinimumVerifiedMinutes(college.minimumVerifiedMinutes);
+    setTimezone(college.timezone);
+  }, [college]);
+
   const handleSelectDirectoryCollege = (presetId: string) => {
     const preset = KNOWN_COLLEGES_DIRECTORY.find((c) => c.collegeId === presetId);
     if (!preset) return;
@@ -83,6 +105,9 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
     setAddress(preset.address);
     setLatitude(String(preset.latitude));
     setLongitude(String(preset.longitude));
+    if (preset.defaultRadiusMeters) {
+      setRadiusMeters(preset.defaultRadiusMeters);
+    }
     setTimezone(preset.timezone);
   };
 
@@ -122,16 +147,26 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
         onSubmit={handleSaveForm}
         className="lg:col-span-7 rounded-2xl bg-white border border-[#E2E8F0] p-5 sm:p-6 space-y-5"
       >
-        <div className="border-b border-[#E2E8F0] pb-4">
-          <span className="text-xs text-[#64748B]">
-            Campus Geofence &amp; Verification Policy
-          </span>
-          <h2 className="text-xl font-bold text-[#0F172A] mt-0.5">
-            College Location &amp; Attendance Rules
-          </h2>
-          <p className="text-xs text-[#64748B] mt-0.5">
-            Updating your college location or working hours applies to future observations and never silently alters historical attendance records.
-          </p>
+        <div className="border-b border-[#E2E8F0] pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <span className="text-xs text-[#64748B]">
+              Campus Geofence &amp; Verification Policy
+            </span>
+            <h2 className="text-xl font-bold text-[#0F172A] mt-0.5">
+              College Location &amp; Attendance Rules
+            </h2>
+            <p className="text-xs text-[#64748B] mt-0.5">
+              Select any campus point and custom radius on the interactive map, or configure coordinates manually.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenMapPicker}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#16A34A] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#166534] transition-colors shrink-0 min-h-[42px]"
+          >
+            <Compass className="w-4 h-4" />
+            <span>Choose on Map</span>
+          </button>
         </div>
 
         {/* Preset Directory Selector */}
@@ -144,7 +179,11 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
           </label>
           <select
             id="college-preset-select"
-            defaultValue={college.collegeId}
+            value={
+              KNOWN_COLLEGES_DIRECTORY.some((c) => c.collegeId === college.collegeId)
+                ? college.collegeId
+                : KNOWN_COLLEGES_DIRECTORY[0].collegeId
+            }
             onChange={(e) => handleSelectDirectoryCollege(e.target.value)}
             className="w-full h-11 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-xs font-semibold text-[#0F172A]"
           >
@@ -156,66 +195,66 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
           </select>
         </div>
 
-        {/* Interactive Campus Geofence Map Preview */}
-        <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-[#0F172A] flex items-center gap-1.5">
-              <MapPin className="w-4 h-4 text-[#16A34A]" />
-              <span>Interactive Geofence Radar Preview</span>
-            </span>
-            <span className="font-mono text-[#64748B] tabular-nums">
-              {Number(latitude).toFixed(4)}°N, {Number(longitude).toFixed(4)}°E · R={radiusMeters}m
-            </span>
-          </div>
+        {/* Saved College Geofence Summary & Google Maps Platform Status */}
+        {(() => {
+          const buildKey =
+            (typeof import.meta !== 'undefined' &&
+              (import.meta.env?.VITE_GOOGLE_MAPS_API_KEY as string | undefined)) ||
+            '';
+          const mapsDiag = evaluateGoogleMapsConfigStatus({
+            apiKey: buildKey,
+            platform: 'web',
+          });
 
-          <div className="relative h-44 w-full rounded-xl bg-slate-100 border border-[#E2E8F0] overflow-hidden flex items-center justify-center">
-            {/* Subtle Map Grid SVG */}
-            <svg
-              className="absolute inset-0 w-full h-full text-slate-200"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              <defs>
-                <pattern id="campus-grid" width="32" height="32" patternUnits="userSpaceOnUse">
-                  <path d="M 32 0 L 0 0 0 32" fill="none" stroke="currentColor" strokeWidth="1" />
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#campus-grid)" />
-              <path
-                d="M 0 90 Q 180 70 360 110 T 720 85"
-                fill="none"
-                stroke="#CBD5E1"
-                strokeWidth="6"
-              />
-              <path
-                d="M 190 0 L 220 220"
-                fill="none"
-                stroke="#CBD5E1"
-                strokeWidth="4"
-              />
-            </svg>
+          return (
+            <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-[#0F172A] flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-[#16A34A]" />
+                  <span>
+                    Active Geofence Boundary (v{college.configVersion ?? 1})
+                  </span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[#64748B] tabular-nums">
+                    {Number(latitude).toFixed(4)}°N, {Number(longitude).toFixed(4)}°E · R=
+                    {radiusMeters}m
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onOpenMapPicker}
+                    className="rounded-lg bg-white border border-[#E2E8F0] px-2.5 py-1 text-[11px] font-semibold text-[#166534] hover:bg-slate-100"
+                  >
+                    Open Google Maps Picker
+                  </button>
+                </div>
+              </div>
 
-            {/* Scaled Geofence Circle */}
-            <div
-              className="relative rounded-full bg-[#16A34A]/15 border-2 border-dashed border-[#16A34A] flex items-center justify-center transition-all"
-              style={{
-                width: `${Math.min(168, Math.max(72, Math.round(radiusMeters * 0.55)))}px`,
-                height: `${Math.min(168, Math.max(72, Math.round(radiusMeters * 0.55)))}px`,
-              }}
-            >
-              <div className="w-7 h-7 rounded-full bg-[#166534] text-white flex items-center justify-center shadow-sm">
-                <MapPin className="w-4 h-4" />
+              <div className="rounded-xl bg-white border border-[#E2E8F0] p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-[#0F172A]">
+                    {collegeName} {college.campusLabel ? `— ${college.campusLabel}` : ''}
+                  </div>
+                  <div className="text-[11px] text-[#64748B]">{address}</div>
+                  <div className="text-[11px] font-mono text-[#166534]">
+                    Google Maps SDK:{' '}
+                    {mapsDiag.status === 'MISSING_API_KEY'
+                      ? 'VITE_GOOGLE_MAPS_API_KEY not configured (Diagnostic alert active)'
+                      : 'Configured'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onOpenMapPicker}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#16A34A] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#166534] transition-colors shrink-0 min-h-[38px]"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  <span>Open Interactive Map</span>
+                </button>
               </div>
             </div>
-
-            <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-[11px] bg-white/90 backdrop-blur-xs px-3 py-1.5 rounded-lg border border-[#E2E8F0]">
-              <span className="font-semibold text-[#0F172A] truncate">{collegeName}</span>
-              <span className="font-mono text-[#166534] shrink-0 ml-2">
-                {radiusMeters}m boundary
-              </span>
-            </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* College Name & Address */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -302,8 +341,8 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
               id="college-radius-input"
               type="number"
               min={50}
-              max={1000}
-              step={10}
+              max={2000}
+              step={5}
               value={radiusMeters}
               onChange={(e) => setRadiusMeters(Number(e.target.value))}
               className="w-full h-10 rounded-xl border border-[#E2E8F0] px-3 text-xs font-mono text-[#0F172A]"
@@ -325,6 +364,26 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
               className="w-full h-10 rounded-xl border border-[#E2E8F0] px-3 text-xs font-mono text-[#0F172A]"
             />
           </div>
+        </div>
+
+        {/* Interactive Geofence Radius Slider */}
+        <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] px-3.5 py-2.5 flex items-center justify-between gap-4">
+          <label
+            htmlFor="settings-radius-slider"
+            className="text-xs font-semibold text-[#0F172A] whitespace-nowrap"
+          >
+            Adjust Geofence Radius: <span className="font-mono text-[#166534]">{radiusMeters}m</span>
+          </label>
+          <input
+            id="settings-radius-slider"
+            type="range"
+            min={50}
+            max={1000}
+            step={5}
+            value={Math.min(1000, radiusMeters)}
+            onChange={(e) => setRadiusMeters(Number(e.target.value))}
+            className="flex-1 accent-[#16A34A] cursor-pointer"
+          />
         </div>
 
         {/* Working Hours & Working Days */}
@@ -382,7 +441,16 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
           </div>
         </div>
 
-        <div className="pt-2 border-t border-[#E2E8F0] flex items-center justify-end">
+        <div className="pt-2 border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={onOpenMapPicker}
+            className="inline-flex items-center gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-2.5 text-xs font-semibold text-[#0F172A] hover:bg-slate-100 transition-colors min-h-[44px]"
+          >
+            <Compass className="w-4 h-4 text-[#16A34A]" />
+            <span>Choose Location &amp; Radius on Map</span>
+          </button>
+
           <button
             type="submit"
             className="inline-flex items-center gap-2 rounded-xl bg-[#16A34A] px-5 py-2.5 text-xs font-semibold text-white hover:bg-[#166534] transition-colors min-h-[44px]"
@@ -391,6 +459,45 @@ export const SettingsAndPrivacyView: React.FC<SettingsAndPrivacyViewProps> = ({
             <span>Save College Configuration</span>
           </button>
         </div>
+
+        {/* Saved Location Configurations (Restore Previous) */}
+        {college.locationHistory && college.locationHistory.length > 0 && (
+          <div className="pt-4 border-t border-[#E2E8F0] space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-[#16A34A]" />
+                <span>Saved College Locations &amp; Radii</span>
+              </span>
+              <span className="text-[11px] text-[#64748B]">Restore previous boundary</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {college.locationHistory.slice(0, 4).map((hist) => (
+                <div
+                  key={hist.id}
+                  className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3 flex items-center justify-between gap-2 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold text-[#0F172A] truncate">
+                      {hist.collegeName}
+                    </div>
+                    <div className="text-[11px] font-mono text-[#64748B] truncate">
+                      {hist.latitude.toFixed(4)}°N, {hist.longitude.toFixed(4)}°E · R=
+                      {hist.radiusMeters}m
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void onRestoreLocationHistory(hist.id)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#0F172A] hover:bg-slate-100 shrink-0"
+                  >
+                    <RotateCcw className="w-3 h-3 text-[#16A34A]" />
+                    <span>Restore</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </form>
 
       {/* Right 5 Columns: Tracking Control, Android Permission Status, Privacy & Account Deletion */}

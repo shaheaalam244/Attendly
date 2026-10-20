@@ -190,3 +190,81 @@ test('API Integration: user registration, cross-user isolation, holidays, and ac
     await close();
   }
 });
+
+test('API Integration: Custom map location picker, radius update, point verification, and history restore', async () => {
+  const { baseUrl, close } = await startTestServer();
+  try {
+    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'aarav.sharma@iitb.ac.in',
+        password: 'Attendly@2026',
+      }),
+    });
+    const loginJson = await loginRes.json();
+    const token = loginJson.data.accessToken as string;
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+
+    // 1. Reverse geocode a coordinate near IISc Bengaluru
+    const revRes = await fetch(
+      `${baseUrl}/api/v1/colleges/reverse-geocode?lat=13.0219&lng=77.5671`,
+      { headers }
+    );
+    assert.equal(revRes.status, 200);
+    const revJson = await revRes.json();
+    assert.equal(revJson.data.nearestPresetId, 'col_iisc');
+
+    // 2. Save a custom college location and custom radius (320m) selected on the map
+    const patchRes = await fetch(`${baseUrl}/api/v1/college-settings`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        collegeName: 'IISc Bengaluru — Main Faculty Hall',
+        campusLabel: 'Faculty Hall & Central Quad',
+        address: 'CV Raman Rd, Malleshwaram, Bengaluru 560012',
+        latitude: 13.0219,
+        longitude: 77.5671,
+        radiusMeters: 320,
+        locationSource: 'MAP_PIN',
+      }),
+    });
+    assert.equal(patchRes.status, 200);
+    const patchJson = await patchRes.json();
+    assert.equal(patchJson.data.collegeSettings.radiusMeters, 320);
+    assert.equal(patchJson.data.collegeSettings.latitude, 13.0219);
+    assert.ok(patchJson.data.collegeSettings.locationHistory.length >= 2);
+
+    // 3. Verify a GPS point ~180m from the new IISc pin against the 320m radius
+    const verifyRes = await fetch(`${baseUrl}/api/v1/college-settings/verify-point`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        latitude: 13.0234,
+        longitude: 77.5671,
+      }),
+    });
+    assert.equal(verifyRes.status, 200);
+    const verifyJson = await verifyRes.json();
+    assert.equal(verifyJson.data.verification.insideGeofence, true);
+    assert.equal(verifyJson.data.verification.radiusMeters, 320);
+
+    // 4. Restore previous IIT Bombay Main Gate configuration from locationHistory
+    const restoreRes = await fetch(`${baseUrl}/api/v1/college-settings/restore`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        historyId: 'loc_hist_iitb_main',
+      }),
+    });
+    assert.equal(restoreRes.status, 200);
+    const restoreJson = await restoreRes.json();
+    assert.equal(restoreJson.data.collegeSettings.collegeId, 'col_iitb');
+    assert.equal(restoreJson.data.collegeSettings.radiusMeters, 150);
+  } finally {
+    await close();
+  }
+});

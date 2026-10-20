@@ -75,9 +75,12 @@ export interface AuditLogEntry {
 interface AttendlyStoreState {
   // Navigation & Onboarding
   activeTab: NavTab;
+  isMapPickerOpen: boolean;
   onboardingCompleted: boolean;
   onboardingStep: number; // 0 to 3
   setActiveTab: (tab: NavTab) => void;
+  openMapPicker: () => void;
+  closeMapPicker: () => void;
   setOnboardingStep: (step: number) => void;
   completeOnboarding: () => void;
   reopenOnboarding: () => void;
@@ -140,6 +143,7 @@ interface AttendlyStoreState {
   enqueueOrSyncObservation: (obs: Omit<RawLocationObservation, 'eventId'>) => Promise<void>;
   syncOfflineQueue: () => Promise<void>;
   updateCollegeSettings: (patch: Partial<CollegeConfig>) => Promise<boolean>;
+  restoreCollegeLocationHistory: (historyId: string) => Promise<boolean>;
   submitAttendanceCorrection: (
     date: string,
     requestedStatus: 'PRESENT' | 'ABSENT' | 'HOLIDAY' | 'UNKNOWN',
@@ -182,6 +186,7 @@ function saveOfflineQueue(queue: RawLocationObservation[]) {
 
 export const useAttendlyStore = create<AttendlyStoreState>((set, get) => ({
   activeTab: 'dashboard',
+  isMapPickerOpen: false,
   onboardingCompleted:
     typeof window !== 'undefined' &&
     (localStorage.getItem(STORAGE_KEYS.ONBOARDING_DONE) === 'true' ||
@@ -189,6 +194,8 @@ export const useAttendlyStore = create<AttendlyStoreState>((set, get) => ({
   onboardingStep: 0,
 
   setActiveTab: (tab) => set({ activeTab: tab, errorBanner: null }),
+  openMapPicker: () => set({ isMapPickerOpen: true, errorBanner: null }),
+  closeMapPicker: () => set({ isMapPickerOpen: false }),
   setOnboardingStep: (step) => set({ onboardingStep: Math.max(0, Math.min(3, step)) }),
   completeOnboarding: () => {
     try {
@@ -661,10 +668,38 @@ export const useAttendlyStore = create<AttendlyStoreState>((set, get) => ({
         return false;
       }
       await get().refreshAllData();
-      get().showToast('College geofence and working hours saved.');
+      get().showToast(
+        json.data?.message || 'College geofence location and radius saved.'
+      );
       return true;
     } catch {
       set({ errorBanner: 'Network error while saving college settings.' });
+      return false;
+    }
+  },
+
+  restoreCollegeLocationHistory: async (historyId) => {
+    const token = get().accessToken;
+    if (!token) return false;
+    try {
+      const res = await fetch('/api/v1/college-settings/restore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ historyId }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        set({ errorBanner: json.error?.message || 'Could not restore saved location.' });
+        return false;
+      }
+      await get().refreshAllData();
+      get().showToast(json.data?.message || 'Restored previous college location and radius.');
+      return true;
+    } catch {
+      set({ errorBanner: 'Network error while restoring saved location.' });
       return false;
     }
   },

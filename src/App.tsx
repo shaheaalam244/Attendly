@@ -12,6 +12,7 @@ import { MonthlySummaryCard } from './components/MonthlySummaryCard';
 import { AttendanceCalendar } from './components/AttendanceCalendar';
 import { HistoryAndReportsView } from './components/HistoryAndReportsView';
 import { SettingsAndPrivacyView } from './components/SettingsAndPrivacyView';
+import { CollegeLocationPickerScreen } from './components/CollegeLocationPickerScreen';
 import { TrackingStatusIndicator } from './components/TrackingStatusIndicator';
 import { OnboardingAndAuthView } from './components/OnboardingAndAuthView';
 import { OfflineQueueBanner, PWAInstallButton } from './components/PWAInstallButton';
@@ -30,6 +31,9 @@ export default function App() {
   const {
     activeTab,
     setActiveTab,
+    isMapPickerOpen,
+    openMapPicker,
+    closeMapPicker,
     onboardingCompleted,
     onboardingStep,
     setOnboardingStep,
@@ -72,6 +76,7 @@ export default function App() {
     syncOfflineQueue,
     setSimulateOffline,
     updateCollegeSettings,
+    restoreCollegeLocationHistory,
     submitAttendanceCorrection,
     deleteAttendanceRecord,
     addHoliday,
@@ -263,6 +268,7 @@ export default function App() {
                   offlineQueueCount={offlineQueue.length}
                   onToggleTracking={(enabled) => void toggleTracking(enabled)}
                   onOpenSettings={() => setActiveTab('settings')}
+                  onOpenMapPicker={openMapPicker}
                 />
 
                 <AttendanceStatusCard
@@ -326,6 +332,8 @@ export default function App() {
                 auditLogs={auditLogs}
                 storedEventsCount={storedEventsCount}
                 onSaveCollegeSettings={updateCollegeSettings}
+                onOpenMapPicker={openMapPicker}
+                onRestoreLocationHistory={restoreCollegeLocationHistory}
                 onToggleTracking={toggleTracking}
                 onUpdatePermissionStatus={updatePermissionStatus}
                 onUpdatePrivacy={updatePrivacySettings}
@@ -338,6 +346,20 @@ export default function App() {
           </>
         )}
       </main>
+
+      {/* Interactive College Location & Geofence Map Picker Modal Screen */}
+      {isMapPickerOpen && collegeSettings && user && (
+        <CollegeLocationPickerScreen
+          college={collegeSettings}
+          trackingEnabled={user.trackingEnabled}
+          accessToken={accessToken}
+          onSaveConfig={updateCollegeSettings}
+          onRestoreHistory={restoreCollegeLocationHistory}
+          onToggleTracking={toggleTracking}
+          onSendTestObservation={enqueueOrSyncObservation}
+          onClose={closeMapPicker}
+        />
+      )}
 
       {/* Honest Scope & Privacy Footer */}
       <footer className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 border-t border-[#E2E8F0] text-xs text-[#64748B] flex flex-col sm:flex-row sm:items-center justify-between gap-2 no-print">

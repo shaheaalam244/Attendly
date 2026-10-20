@@ -1,16 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 import {
   AttendanceStatus,
   LocationEventType,
   calculateDistanceMeters,
   evaluateAttendanceSession,
   buildMonthlyCalendarAndSummary,
+  verifyPointAgainstGeofence,
+  resolveReverseGeocodeLocation,
+  evaluateGoogleMapsConfigStatus,
+  createInitialMapPickerState,
+  applyCameraPanOrZoom,
+  applyExplicitCenterSelection,
+  applyGeofenceRadiusUpdate,
   type CollegeConfig,
   type RawLocationObservation,
   type StoredAttendanceRecord,
   type HolidayItem,
 } from './attendanceEngine.ts';
+import { createExpressApp } from '../../server.ts';
+import { AttendlyDataStore } from '../server/store.ts';
 
 const defaultCollege: CollegeConfig = {
   collegeId: 'col_iitb',
@@ -332,3 +344,282 @@ test('returns "No eligible working days" when denominator is zero', () => {
   assert.equal(summary.attendancePercentage, null);
   assert.equal(summary.formattedPercentage, 'No eligible working days');
 });
+
+test('custom user-picked college coordinates and custom radius (350m) evaluate presence accurately', () => {
+  const customCollege: CollegeConfig = {
+    ...defaultCollege,
+    collegeId: 'col_custom_pune',
+    collegeName: 'COEP Technological University Pune',
+    latitude: 18.5293,
+    longitude: 73.8565,
+    radiusMeters: 350,
+  };
+
+  // Point ~220m north of custom pin (outside default 150m, but INSIDE custom 350m radius)
+  const testLat = 18.5312;
+  const testLng = 73.8565;
+
+  const check = verifyPointAgainstGeofence({
+    pointLatitude: testLat,
+    pointLongitude: testLng,
+    targetLatitude: customCollege.latitude,
+    targetLongitude: customCollege.longitude,
+    radiusMeters: customCollege.radiusMeters,
+  });
+
+  assert.equal(check.insideGeofence, true);
+  assert.ok(check.distanceMeters > 150 && check.distanceMeters < 350);
+
+  const observations: RawLocationObservation[] = [
+    {
+      eventId: 'cust-1',
+      eventType: LocationEventType.ENTER,
+      observedAt: '2026-10-19T04:00:00.000Z',
+      latitude: testLat,
+      longitude: testLng,
+      accuracyMeters: 15,
+    },
+    {
+      eventId: 'cust-2',
+      eventType: LocationEventType.HEARTBEAT,
+      observedAt: '2026-10-19T04:15:00.000Z',
+      latitude: testLat,
+      longitude: testLng,
+      accuracyMeters: 15,
+    },
+    {
+      eventId: 'cust-3',
+      eventType: LocationEventType.DWELL,
+      observedAt: '2026-10-19T04:30:00.000Z',
+      latitude: testLat,
+      longitude: testLng,
+      accuracyMeters: 15,
+    },
+  ];
+
+  const evalRes = evaluateAttendanceSession(observations, customCollege, {
+    targetDate: '2026-10-19',
+    referenceNowIso: '2026-10-19T04:35:00.000Z',
+  });
+
+  assert.equal(evalRes.status, AttendanceStatus.PRESENT);
+  assert.equal(evalRes.verifiedDurationSeconds, 1800);
+
+  const rev = resolveReverseGeocodeLocation(18.5293, 73.8565);
+  assert.equal(rev.nearestPresetId, 'col_coep');
+});
+
+test('evaluateGoogleMapsConfigStatus detects missing key, auth/billing error, and ready states accurately', () => {
+  const missingWeb = evaluateGoogleMapsConfigStatus({
+    apiKey: '',
+    platform: 'web',
+  });
+  assert.equal(missingWeb.status, 'MISSING_API_KEY');
+  assert.equal(missingWeb.isInteractiveMapAvailable, false);
+  assert.equal(missingWeb.envVarName, 'VITE_GOOGLE_MAPS_API_KEY');
+
+  const missingAndroid = evaluateGoogleMapsConfigStatus({
+    apiKey: 'YOUR_API_KEY',
+    platform: 'android',
+  });
+  assert.equal(missingAndroid.status, 'MISSING_API_KEY');
+  assert.equal(missingAndroid.envVarName, 'EXPO_PUBLIC_GOOGLE_MAPS_API_KEY');
+
+  const authFail = evaluateGoogleMapsConfigStatus({
+    apiKey: 'AIzaSyTestInvalidKey1234567890',
+    sdkLoadingStatus: 'AUTH_FAILURE',
+    authFailureDetected: true,
+    platform: 'web',
+  });
+  assert.equal(authFail.status, 'AUTH_OR_BILLING_ERROR');
+  assert.equal(authFail.isInteractiveMapAvailable, false);
+
+  const ready = evaluateGoogleMapsConfigStatus({
+    apiKey: 'AIzaSyValidFormatKey1234567890abc',
+    sdkLoadingStatus: 'LOADED',
+    platform: 'web',
+  });
+  assert.equal(ready.status, 'READY');
+  assert.equal(ready.isInteractiveMapAvailable, true);
+});
+
+test('camera panning alone NEVER changes selected centre, while explicit actions and radius updates do', () => {
+  const initial = createInitialMapPickerState(defaultCollege);
+  assert.equal(initial.selectedLat, 19.1334);
+  assert.equal(initial.selectedLng, 72.9133);
+  assert.equal(initial.radiusMeters, 150);
+
+  // Panning the map camera 5km away must NOT alter selectedLat or selectedLng
+  const afterPan = applyCameraPanOrZoom(initial, { lat: 19.18, lng: 72.95 }, 14);
+  assert.equal(afterPan.cameraCenter.lat, 19.18);
+  assert.equal(afterPan.cameraCenter.lng, 72.95);
+  assert.equal(afterPan.zoom, 14);
+  assert.equal(afterPan.selectedLat, 19.1334);
+  assert.equal(afterPan.selectedLng, 72.9133);
+
+  // Explicit map tap updates selectedLat and selectedLng
+  const afterTap = applyExplicitCenterSelection(afterPan, {
+    latitude: 18.5293,
+    longitude: 73.8565,
+    source: 'MAP_PIN',
+    recenterCamera: false,
+  });
+  assert.equal(afterTap.valid, true);
+  assert.equal(afterTap.state.selectedLat, 18.5293);
+  assert.equal(afterTap.state.selectedLng, 73.8565);
+  assert.equal(afterTap.state.locationSource, 'MAP_PIN');
+  // Camera stayed where it was panned when recenterCamera is false
+  assert.equal(afterTap.state.cameraCenter.lat, 19.18);
+
+  // Invalid coordinates are rejected without mutating selectedLat/selectedLng
+  const invalidCoord = applyExplicitCenterSelection(afterTap.state, {
+    latitude: 105,
+    longitude: 73.8565,
+    source: 'MANUAL_COORDS',
+  });
+  assert.equal(invalidCoord.valid, false);
+  assert.equal(invalidCoord.state.selectedLat, 18.5293);
+
+  // Radius updates validate bounds and update radiusMeters immediately
+  const radiusUp = applyGeofenceRadiusUpdate(afterTap.state, 425);
+  assert.equal(radiusUp.valid, true);
+  assert.equal(radiusUp.state.radiusMeters, 425);
+
+  const radiusTooSmall = applyGeofenceRadiusUpdate(radiusUp.state, 20);
+  assert.equal(radiusTooSmall.valid, false);
+  assert.equal(radiusTooSmall.state.radiusMeters, 50); // clamped to minimum 50m
+});
+
+test('end-to-end API: save/reload geofence with configVersion, API validation errors, and real attendance engine control', async () => {
+  const tmpFile = path.join(os.tmpdir(), `attendly-test-${Date.now()}.json`);
+  const testStore = new AttendlyDataStore({ dbPath: tmpFile, inMemoryOnly: true });
+  const app = createExpressApp(testStore);
+  const server = app.listen(0);
+
+  try {
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    const baseUrl = `http://127.0.0.1:${port}/api/v1`;
+
+    // 1. Authenticate as Demo Student
+    const loginRes = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'aarav.sharma@iitb.ac.in',
+        password: 'Attendly@2026',
+      }),
+    });
+    assert.equal(loginRes.status, 200);
+    const loginJson = await loginRes.json();
+    const token = loginJson.data.accessToken as string;
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    // 2. Check /maps/config diagnostic endpoint
+    const mapsConfigRes = await fetch(`${baseUrl}/maps/config`, { headers: authHeaders });
+    assert.equal(mapsConfigRes.status, 200);
+    const mapsConfigJson = await mapsConfigRes.json();
+    assert.equal(mapsConfigJson.success, true);
+    assert.equal(mapsConfigJson.data.attributionId, 'gmp_mcp_codeassist_v1_aistudio');
+
+    // 3. Verify API rejects invalid coordinates and invalid radius (Requirement 13: API errors)
+    const badPatchRes = await fetch(`${baseUrl}/college-settings`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ latitude: 99.5, radiusMeters: 10 }),
+    });
+    assert.equal(badPatchRes.status, 400);
+    const badPatchJson = await badPatchRes.json();
+    assert.equal(badPatchJson.error.code, 'VALIDATION_ERROR');
+
+    // 4. Save new college location & custom 400m radius and verify configVersion increments (1 -> 2)
+    const saveRes = await fetch(`${baseUrl}/college-settings`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({
+        collegeName: 'IISc Bengaluru Custom Campus',
+        campusLabel: 'Main Faculty Hall Gate',
+        address: 'CV Raman Rd, Bengaluru, Karnataka 560012',
+        latitude: 13.0219,
+        longitude: 77.5671,
+        radiusMeters: 400,
+        locationSource: 'MAP_PIN',
+      }),
+    });
+    assert.equal(saveRes.status, 200);
+    const saveJson = await saveRes.json();
+    assert.equal(saveJson.data.collegeSettings.latitude, 13.0219);
+    assert.equal(saveJson.data.collegeSettings.longitude, 77.5671);
+    assert.equal(saveJson.data.collegeSettings.radiusMeters, 400);
+    assert.equal(saveJson.data.collegeSettings.configVersion, 2);
+
+    // 5. Reload via GET /college-settings and confirm persistence
+    const reloadRes = await fetch(`${baseUrl}/college-settings`, { headers: authHeaders });
+    const reloadJson = await reloadRes.json();
+    assert.equal(reloadJson.data.collegeSettings.collegeName, 'IISc Bengaluru Custom Campus');
+    assert.equal(reloadJson.data.collegeSettings.radiusMeters, 400);
+    assert.equal(reloadJson.data.collegeSettings.configVersion, 2);
+
+    // 6. Verify saved 400m geofence controls real attendance engine (point ~255m north of 13.0219, 77.5671)
+    const syncRes = await fetch(`${baseUrl}/attendance/sync`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        referenceNowIso: '2026-10-19T06:00:00.000Z',
+        events: [
+          {
+            eventId: 'iisc-evt-1',
+            eventType: 'ENTER',
+            observedAt: '2026-10-19T05:00:00.000Z',
+            latitude: 13.0242,
+            longitude: 77.5671,
+            accuracyMeters: 12,
+          },
+          {
+            eventId: 'iisc-evt-2',
+            eventType: 'HEARTBEAT',
+            observedAt: '2026-10-19T05:12:00.000Z',
+            latitude: 13.0242,
+            longitude: 77.5671,
+            accuracyMeters: 12,
+          },
+          {
+            eventId: 'iisc-evt-3',
+            eventType: 'HEARTBEAT',
+            observedAt: '2026-10-19T05:24:00.000Z',
+            latitude: 13.0242,
+            longitude: 77.5671,
+            accuracyMeters: 12,
+          },
+          {
+            eventId: 'iisc-evt-4',
+            eventType: 'DWELL',
+            observedAt: '2026-10-19T05:35:00.000Z',
+            latitude: 13.0242,
+            longitude: 77.5671,
+            accuracyMeters: 12,
+          },
+        ],
+      }),
+    });
+    assert.equal(syncRes.status, 200);
+
+    const todayRes = await fetch(
+      `${baseUrl}/attendance/today?now=${encodeURIComponent('2026-10-19T06:00:00.000Z')}`,
+      { headers: authHeaders }
+    );
+    assert.equal(todayRes.status, 200);
+    const todayJson = await todayRes.json();
+    assert.equal(todayJson.data.status, 'PRESENT');
+    assert.equal(todayJson.data.radiusMeters, 400);
+  } finally {
+    server.close();
+    if (fs.existsSync(tmpFile)) {
+      fs.unlinkSync(tmpFile);
+    }
+  }
+});
+

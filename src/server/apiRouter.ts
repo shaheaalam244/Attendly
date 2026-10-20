@@ -7,6 +7,10 @@ import {
   evaluateAttendanceSession,
   buildMonthlyCalendarAndSummary,
   getLocalDateTimeInTimezone,
+  resolveReverseGeocodeLocation,
+  verifyPointAgainstGeofence,
+  evaluateGoogleMapsConfigStatus,
+  type LocationSourceType,
   type RawLocationObservation,
   type StoredAttendanceRecord,
 } from '../engine/attendanceEngine.ts';
@@ -52,10 +56,23 @@ const loginSchema = z.object({
 const collegeSettingsPatchSchema = z.object({
   collegeId: z.string().trim().min(1).optional(),
   collegeName: z.string().trim().min(2).max(140).optional(),
+  campusLabel: z.string().trim().max(120).optional(),
   address: z.string().trim().min(2).max(240).optional(),
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
-  radiusMeters: z.number().int().min(50).max(1000).optional(),
+  radiusMeters: z.number().int().min(50).max(2000).optional(),
+  configVersion: z.number().int().min(1).optional(),
+  locationSource: z
+    .enum([
+      'MAP_PIN',
+      'SEARCH_PLACE',
+      'CURRENT_GPS',
+      'MANUAL_COORDS',
+      'DIRECTORY_PRESET',
+      'RESTORED',
+    ])
+    .optional(),
+  placeId: z.string().trim().max(120).optional(),
   workingDays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
   startTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM').optional(),
   endTime: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM').optional(),
@@ -199,6 +216,7 @@ export function createApiRouter(store: AttendlyDataStore = defaultStore) {
         latitude: 19.1334,
         longitude: 72.9133,
         radiusMeters: 150,
+        configVersion: 1,
         workingDays: [1, 2, 3, 4, 5, 6],
         startTime: '09:00',
         endTime: '17:00',
@@ -213,6 +231,9 @@ export function createApiRouter(store: AttendlyDataStore = defaultStore) {
       };
       db.collegeSettings.push(settings);
       store.save();
+    }
+    if (settings.configVersion === undefined) {
+      settings.configVersion = 1;
     }
     return settings;
   };
@@ -500,31 +521,210 @@ export function createApiRouter(store: AttendlyDataStore = defaultStore) {
   });
 
   // ============================================================================
-  // 2. COLLEGE CONFIGURATION ENDPOINTS
+  // 2. COLLEGE CONFIGURATION & GOOGLE MAPS PLATFORM ENDPOINTS
   // ============================================================================
 
-  router.get('/colleges/search', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const q = String(req.query.q || '').trim().toLowerCase();
-    const results = q
-      ? KNOWN_COLLEGES_DIRECTORY.filter(
-          (c) =>
-            c.collegeName.toLowerCase().includes(q) ||
-            c.address.toLowerCase().includes(q) ||
-            c.collegeId.toLowerCase().includes(q)
-        )
-      : KNOWN_COLLEGES_DIRECTORY;
+  router.get('/maps/config', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+    const clientApiKey = (process.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+    const androidKeyConfigured = Boolean(
+      (process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '').trim()
+    );
+    const serverGeocodingConfigured = Boolean(
+      (process.env.GOOGLE_MAPS_SERVER_API_KEY || '').trim()
+    );
+    const webDiagnostic = evaluateGoogleMapsConfigStatus({
+      apiKey: clientApiKey,
+      platform: 'web',
+    });
+    const androidDiagnostic = evaluateGoogleMapsConfigStatus({
+      apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '',
+      platform: 'android',
+    });
 
     res.json({
       success: true,
       data: {
-        colleges: results,
-        mapsApiConfigured: Boolean(process.env.GOOGLE_MAPS_SERVER_API_KEY),
+        clientApiKey,
+        keyConfigured: webDiagnostic.status !== 'MISSING_API_KEY',
+        androidKeyConfigured,
+        serverGeocodingConfigured,
+        attributionId: 'gmp_mcp_codeassist_v1_aistudio',
+        webDiagnostic,
+        androidDiagnostic,
       },
     });
   });
 
+  router.get('/colleges/search', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const q = String(req.query.q || '').trim();
+    const qLower = q.toLowerCase();
+    const directoryResults = qLower
+      ? KNOWN_COLLEGES_DIRECTORY.filter(
+          (c) =>
+            c.collegeName.toLowerCase().includes(qLower) ||
+            (c.campusLabel && c.campusLabel.toLowerCase().includes(qLower)) ||
+            c.address.toLowerCase().includes(qLower) ||
+            c.collegeId.toLowerCase().includes(qLower)
+        )
+      : KNOWN_COLLEGES_DIRECTORY;
+
+    const serverKey = (process.env.GOOGLE_MAPS_SERVER_API_KEY || '').trim();
+    const geocodedColleges: Array<{
+      collegeId: string;
+      collegeName: string;
+      campusLabel: string;
+      address: string;
+      latitude: number;
+      longitude: number;
+      defaultRadiusMeters: number;
+      timezone: string;
+      placeId?: string;
+    }> = [];
+
+    if (serverKey && q.length >= 3) {
+      try {
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+          q
+        )}&key=${encodeURIComponent(serverKey)}`;
+        const geoRes = await fetch(url, {
+          headers: { 'X-Goog-Maps-Attribution-Id': 'gmp_mcp_codeassist_v1_aistudio' },
+        });
+        if (geoRes.ok) {
+          const geoData = (await geoRes.json()) as {
+            status?: string;
+            results?: Array<{
+              place_id?: string;
+              formatted_address?: string;
+              address_components?: Array<{ long_name: string; types: string[] }>;
+              geometry?: { location?: { lat: number; lng: number } };
+            }>;
+          };
+          if (geoData.status === 'OK' && Array.isArray(geoData.results)) {
+            for (const item of geoData.results.slice(0, 4)) {
+              const loc = item.geometry?.location;
+              if (!loc) continue;
+              const primaryName =
+                item.address_components?.[0]?.long_name ||
+                item.formatted_address?.split(',')[0] ||
+                q;
+              geocodedColleges.push({
+                collegeId: `col_gmp_${(item.place_id || primaryName).slice(0, 10)}`,
+                collegeName: primaryName,
+                campusLabel: 'Google Maps Geocoded Location',
+                address: item.formatted_address || q,
+                latitude: Number(loc.lat.toFixed(6)),
+                longitude: Number(loc.lng.toFixed(6)),
+                defaultRadiusMeters: 150,
+                timezone: 'Asia/Kolkata',
+                placeId: item.place_id,
+              });
+            }
+          }
+        }
+      } catch {
+        // Fallback gracefully to verified campus directory
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        colleges: [...geocodedColleges, ...directoryResults],
+        mapsApiConfigured: Boolean(
+          process.env.GOOGLE_MAPS_SERVER_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY
+        ),
+      },
+    });
+  });
+
+  router.get(
+    '/colleges/reverse-geocode',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const lat = Number(req.query.lat);
+      const lng = Number(req.query.lng);
+      if (
+        Number.isNaN(lat) ||
+        Number.isNaN(lng) ||
+        lat < -90 ||
+        lat > 90 ||
+        lng < -180 ||
+        lng > 180
+      ) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_COORDINATES',
+            message: 'Valid latitude (-90..90) and longitude (-180..180) are required.',
+          },
+        });
+        return;
+      }
+
+      const resolved = resolveReverseGeocodeLocation(lat, lng);
+      const serverKey = (process.env.GOOGLE_MAPS_SERVER_API_KEY || '').trim();
+
+      if (serverKey) {
+        try {
+          const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${encodeURIComponent(
+            serverKey
+          )}`;
+          const geoRes = await fetch(url, {
+            headers: { 'X-Goog-Maps-Attribution-Id': 'gmp_mcp_codeassist_v1_aistudio' },
+          });
+          if (geoRes.ok) {
+            const geoData = (await geoRes.json()) as {
+              status?: string;
+              results?: Array<{
+                place_id?: string;
+                formatted_address?: string;
+                address_components?: Array<{ long_name: string; types: string[] }>;
+              }>;
+            };
+            const first = geoData.results?.[0];
+            if (geoData.status === 'OK' && first?.formatted_address) {
+              const poiComp = first.address_components?.find(
+                (c) =>
+                  c.types.includes('establishment') ||
+                  c.types.includes('point_of_interest') ||
+                  c.types.includes('university') ||
+                  c.types.includes('premise')
+              );
+              res.json({
+                success: true,
+                data: {
+                  latitude: lat,
+                  longitude: lng,
+                  ...resolved,
+                  suggestedName: poiComp?.long_name || resolved.suggestedName,
+                  formattedAddress: first.formatted_address,
+                  placeId: first.place_id,
+                },
+              });
+              return;
+            }
+          }
+        } catch {
+          // Use deterministic fallback below
+        }
+      }
+
+      res.json({
+        success: true,
+        data: {
+          latitude: lat,
+          longitude: lng,
+          ...resolved,
+        },
+      });
+    }
+  );
+
   router.get('/college-settings', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const settings = getOrCreateCollegeSettings(req.user!);
+    if (!settings.locationHistory) {
+      settings.locationHistory = [];
+    }
     res.json({
       success: true,
       data: { collegeSettings: settings },
@@ -549,20 +749,67 @@ export function createApiRouter(store: AttendlyDataStore = defaultStore) {
     const settings = getOrCreateCollegeSettings(user);
     const now = new Date().toISOString();
 
-    Object.assign(settings, parsed.data, { updatedAt: now });
+    if (!settings.locationHistory) {
+      settings.locationHistory = [];
+    }
+
+    const locationChanged =
+      (parsed.data.latitude !== undefined && parsed.data.latitude !== settings.latitude) ||
+      (parsed.data.longitude !== undefined && parsed.data.longitude !== settings.longitude) ||
+      (parsed.data.radiusMeters !== undefined && parsed.data.radiusMeters !== settings.radiusMeters) ||
+      (parsed.data.collegeName !== undefined && parsed.data.collegeName !== settings.collegeName);
+
+    const nextConfigVersion = (settings.configVersion ?? 1) + 1;
+
+    Object.assign(settings, parsed.data, {
+      configVersion: nextConfigVersion,
+      updatedAt: now,
+    });
     if (parsed.data.collegeId) {
       user.collegeId = parsed.data.collegeId;
+    } else if (locationChanged && !parsed.data.collegeId) {
+      settings.collegeId = `col_custom_${user.id.slice(-6)}`;
+      user.collegeId = settings.collegeId;
     }
+
     if (parsed.data.timezone) {
       user.timezone = parsed.data.timezone;
     }
     user.updatedAt = now;
 
+    // Record in locationHistory for one-click restore
+    const historyEntry = {
+      id: `loc_hist_${crypto.randomUUID().slice(0, 8)}`,
+      collegeId: settings.collegeId,
+      collegeName: settings.collegeName,
+      campusLabel: settings.campusLabel || 'Custom Campus Geofence',
+      address: settings.address,
+      latitude: settings.latitude,
+      longitude: settings.longitude,
+      radiusMeters: settings.radiusMeters,
+      configVersion: settings.configVersion,
+      locationSource: (settings.locationSource || 'MAP_PIN') as LocationSourceType,
+      placeId: settings.placeId,
+      savedAt: now,
+    };
+
+    // Deduplicate identical consecutive entries
+    const topHistory = settings.locationHistory[0];
+    if (
+      !topHistory ||
+      Math.abs(topHistory.latitude - historyEntry.latitude) > 0.00001 ||
+      Math.abs(topHistory.longitude - historyEntry.longitude) > 0.00001 ||
+      topHistory.radiusMeters !== historyEntry.radiusMeters ||
+      topHistory.collegeName !== historyEntry.collegeName
+    ) {
+      settings.locationHistory = [historyEntry, ...settings.locationHistory].slice(0, 10);
+    }
+
     store.getState().auditLogs.unshift({
       id: crypto.randomUUID(),
       userId: user.id,
       action: 'COLLEGE_SETTINGS_UPDATED',
-      details: `Updated college geofence (${settings.collegeName}, radius ${settings.radiusMeters}m, threshold ${settings.minimumVerifiedMinutes}m). Historical records preserved.`,
+      details: `Updated college geofence v${settings.configVersion} (${settings.collegeName}, ${settings.latitude.toFixed(4)}°N ${settings.longitude.toFixed(4)}°E, radius ${settings.radiusMeters}m, threshold ${settings.minimumVerifiedMinutes}m). Historical records preserved.`,
       createdAt: now,
     });
 
@@ -573,10 +820,126 @@ export function createApiRouter(store: AttendlyDataStore = defaultStore) {
       data: {
         collegeSettings: settings,
         message:
-          'College configuration saved. Historical attendance records remain unchanged.',
+          'College configuration saved. Active attendance engine updated with new location and radius.',
       },
     });
   });
+
+  router.post(
+    '/college-settings/restore',
+    requireAuth,
+    (req: AuthenticatedRequest, res: Response) => {
+      const historyId = String(req.body?.historyId || '').trim();
+      const user = req.user!;
+      const settings = getOrCreateCollegeSettings(user);
+      const historyList = settings.locationHistory || [];
+      const target = historyList.find((item) => item.id === historyId);
+
+      if (!target) {
+        res.status(404).json({
+          success: false,
+          error: {
+            code: 'HISTORY_ENTRY_NOT_FOUND',
+            message: 'Selected saved location configuration was not found.',
+          },
+        });
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const nextConfigVersion = (settings.configVersion ?? 1) + 1;
+      settings.collegeId = target.collegeId;
+      settings.collegeName = target.collegeName;
+      settings.campusLabel = target.campusLabel;
+      settings.address = target.address;
+      settings.latitude = target.latitude;
+      settings.longitude = target.longitude;
+      settings.radiusMeters = target.radiusMeters;
+      settings.configVersion = nextConfigVersion;
+      settings.locationSource = 'RESTORED';
+      settings.placeId = target.placeId;
+      settings.updatedAt = now;
+      user.collegeId = target.collegeId;
+      user.updatedAt = now;
+
+      store.getState().auditLogs.unshift({
+        id: crypto.randomUUID(),
+        userId: user.id,
+        action: 'COLLEGE_GEOFENCE_RESTORED',
+        details: `Restored previous geofence configuration v${nextConfigVersion}: ${target.collegeName} (${target.latitude.toFixed(4)}°N, ${target.longitude.toFixed(4)}°E, radius ${target.radiusMeters}m).`,
+        createdAt: now,
+      });
+
+      store.save();
+
+      res.json({
+        success: true,
+        data: {
+          collegeSettings: settings,
+          message: `Restored ${target.collegeName} (${target.radiusMeters}m radius, v${nextConfigVersion}).`,
+        },
+      });
+    }
+  );
+
+  router.post(
+    '/college-settings/verify-point',
+    requireAuth,
+    (req: AuthenticatedRequest, res: Response) => {
+      const settings = getOrCreateCollegeSettings(req.user!);
+      const pointLatitude = Number(req.body?.latitude);
+      const pointLongitude = Number(req.body?.longitude);
+      const targetLatitude =
+        req.body?.targetLatitude !== undefined
+          ? Number(req.body.targetLatitude)
+          : settings.latitude;
+      const targetLongitude =
+        req.body?.targetLongitude !== undefined
+          ? Number(req.body.targetLongitude)
+          : settings.longitude;
+      const radiusMeters =
+        req.body?.radiusMeters !== undefined
+          ? Number(req.body.radiusMeters)
+          : settings.radiusMeters;
+      const accuracyMeters =
+        req.body?.accuracyMeters !== undefined ? Number(req.body.accuracyMeters) : 12;
+
+      if (
+        Number.isNaN(pointLatitude) ||
+        Number.isNaN(pointLongitude) ||
+        pointLatitude < -90 ||
+        pointLatitude > 90 ||
+        pointLongitude < -180 ||
+        pointLongitude > 180
+      ) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'INVALID_COORDINATES',
+            message: 'Valid point latitude and longitude are required.',
+          },
+        });
+        return;
+      }
+
+      const verification = verifyPointAgainstGeofence({
+        pointLatitude,
+        pointLongitude,
+        targetLatitude,
+        targetLongitude,
+        radiusMeters,
+        accuracyMeters,
+        maxAccuracyMeters: settings.maxAccuracyMeters,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          verification,
+        },
+      });
+    }
+  );
 
   // ============================================================================
   // 3. TRACKING & SYNCHRONIZATION ENDPOINTS

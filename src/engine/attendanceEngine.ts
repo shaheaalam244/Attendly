@@ -24,13 +24,41 @@ export const LocationEventType = {
 
 export type LocationEventType = (typeof LocationEventType)[keyof typeof LocationEventType];
 
-export interface CollegeConfig {
+export type LocationSourceType =
+  | 'MAP_PIN'
+  | 'SEARCH_PLACE'
+  | 'CURRENT_GPS'
+  | 'MANUAL_COORDS'
+  | 'DIRECTORY_PRESET'
+  | 'RESTORED';
+
+export interface SavedCollegeLocationEntry {
+  id: string;
   collegeId: string;
   collegeName: string;
+  campusLabel?: string;
   address: string;
   latitude: number;
   longitude: number;
-  radiusMeters: number; // default 150
+  radiusMeters: number;
+  configVersion?: number;
+  locationSource: LocationSourceType;
+  placeId?: string;
+  savedAt: string;
+}
+
+export interface CollegeConfig {
+  collegeId: string;
+  collegeName: string;
+  campusLabel?: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number; // default 150 (customizable 50–2000m)
+  configVersion?: number; // increments on every saved location/radius update
+  locationSource?: LocationSourceType;
+  placeId?: string;
+  locationHistory?: SavedCollegeLocationEntry[];
   workingDays: number[]; // 0=Sun, 1=Mon ... 6=Sat; default [1,2,3,4,5,6]
   startTime: string; // "09:00"
   endTime: string; // "17:00"
@@ -46,49 +74,101 @@ export const KNOWN_COLLEGES_DIRECTORY = [
   {
     collegeId: 'col_iitb',
     collegeName: 'Indian Institute of Technology Bombay',
+    campusLabel: 'Main Gate & Central Academic Area',
     address: 'Main Gate Rd, IIT Area, Powai, Mumbai, Maharashtra 400076',
     latitude: 19.1334,
     longitude: 72.9133,
+    defaultRadiusMeters: 150,
+    timezone: 'Asia/Kolkata',
+  },
+  {
+    collegeId: 'col_iitb_cse',
+    collegeName: 'IIT Bombay — Kanwal Rekhi (KReSIT) CSE Building',
+    campusLabel: 'Department of Computer Science & Engineering',
+    address: 'Hillside Rd, IIT Area, Powai, Mumbai, Maharashtra 400076',
+    latitude: 19.1306,
+    longitude: 72.9158,
+    defaultRadiusMeters: 120,
     timezone: 'Asia/Kolkata',
   },
   {
     collegeId: 'col_iisc',
     collegeName: 'Indian Institute of Science (IISc) Bengaluru',
-    address: 'CV Raman Rd, Bengaluru, Karnataka 560012',
+    campusLabel: 'Main Building & Faculty Hall',
+    address: 'CV Raman Rd, Malleshwaram, Bengaluru, Karnataka 560012',
     latitude: 13.0219,
     longitude: 77.5671,
+    defaultRadiusMeters: 200,
     timezone: 'Asia/Kolkata',
   },
   {
     collegeId: 'col_iitd',
     collegeName: 'Indian Institute of Technology Delhi',
+    campusLabel: 'LHC & Main Academic Block',
     address: 'Hauz Khas, New Delhi, Delhi 110016',
     latitude: 28.5450,
     longitude: 77.1926,
+    defaultRadiusMeters: 180,
+    timezone: 'Asia/Kolkata',
+  },
+  {
+    collegeId: 'col_iitm',
+    collegeName: 'Indian Institute of Technology Madras',
+    campusLabel: 'Gajendra Circle & Academic Zone',
+    address: 'Sardar Patel Rd, Adyar, Chennai, Tamil Nadu 600036',
+    latitude: 12.9915,
+    longitude: 80.2337,
+    defaultRadiusMeters: 220,
     timezone: 'Asia/Kolkata',
   },
   {
     collegeId: 'col_vjti',
     collegeName: 'Veermata Jijabai Technological Institute (VJTI)',
+    campusLabel: 'Main Heritage Quad',
     address: 'H R Mahajani Rd, Matunga East, Mumbai, Maharashtra 400019',
     latitude: 19.0222,
     longitude: 72.8561,
+    defaultRadiusMeters: 140,
     timezone: 'Asia/Kolkata',
   },
   {
     collegeId: 'col_coep',
     collegeName: 'COEP Technological University Pune',
+    campusLabel: 'North & South Academic Campus',
     address: 'Wellesley Rd, Shivajinagar, Pune, Maharashtra 411005',
     latitude: 18.5293,
     longitude: 73.8565,
+    defaultRadiusMeters: 150,
     timezone: 'Asia/Kolkata',
   },
   {
     collegeId: 'col_bits',
     collegeName: 'BITS Pilani — K K Birla Goa Campus',
+    campusLabel: 'B-Dome & Lecture Complex',
     address: 'NH 17B, Bypass Road, Zuarinagar, Sancoale, Goa 403726',
     latitude: 15.3911,
     longitude: 73.8782,
+    defaultRadiusMeters: 250,
+    timezone: 'Asia/Kolkata',
+  },
+  {
+    collegeId: 'col_nitk',
+    collegeName: 'National Institute of Technology Karnataka (NITK Surathkal)',
+    campusLabel: 'Main Administrative & Lecture Block',
+    address: 'NH 66, Srinivasnagar, Surathkal, Mangaluru, Karnataka 575025',
+    latitude: 13.0108,
+    longitude: 74.7943,
+    defaultRadiusMeters: 200,
+    timezone: 'Asia/Kolkata',
+  },
+  {
+    collegeId: 'col_du_north',
+    collegeName: 'University of Delhi — North Campus',
+    campusLabel: 'Arts & Science Faculty Block',
+    address: 'Chhatra Marg, University Enclave, New Delhi, Delhi 110007',
+    latitude: 28.6880,
+    longitude: 77.2100,
+    defaultRadiusMeters: 250,
     timezone: 'Asia/Kolkata',
   },
 ];
@@ -820,3 +900,344 @@ export function buildMonthlyCalendarAndSummary(params: {
     },
   };
 }
+
+export interface GeofencePointVerificationResult {
+  distanceMeters: number;
+  radiusMeters: number;
+  insideGeofence: boolean;
+  marginMeters: number; // positive when inside boundary, negative when outside
+  accuracyMeters: number;
+  accuracyAcceptable: boolean;
+  effectiveInsideWithAccuracy: boolean;
+}
+
+/**
+ * Evaluates an arbitrary coordinate against a target geofence center and radius.
+ * Used both by the live interactive Map Picker verification tool and backend API.
+ */
+export function verifyPointAgainstGeofence(params: {
+  pointLatitude: number;
+  pointLongitude: number;
+  targetLatitude: number;
+  targetLongitude: number;
+  radiusMeters: number;
+  accuracyMeters?: number;
+  maxAccuracyMeters?: number;
+}): GeofencePointVerificationResult {
+  const distanceMeters = Number(
+    calculateDistanceMeters(
+      params.pointLatitude,
+      params.pointLongitude,
+      params.targetLatitude,
+      params.targetLongitude
+    ).toFixed(1)
+  );
+  const accuracyMeters = params.accuracyMeters ?? 12;
+  const maxAccuracyMeters = params.maxAccuracyMeters ?? 50;
+  const insideGeofence = distanceMeters <= params.radiusMeters;
+  const marginMeters = Number((params.radiusMeters - distanceMeters).toFixed(1));
+  const accuracyAcceptable = accuracyMeters <= maxAccuracyMeters * 2;
+
+  return {
+    distanceMeters,
+    radiusMeters: params.radiusMeters,
+    insideGeofence,
+    marginMeters,
+    accuracyMeters,
+    accuracyAcceptable,
+    effectiveInsideWithAccuracy: insideGeofence && accuracyAcceptable,
+  };
+}
+
+/**
+ * Deterministic reverse-geocode helper that resolves the closest known campus
+ * or generates a structured coordinate locality description when offline or
+ * when no external Geocoding REST key is configured.
+ */
+export function resolveReverseGeocodeLocation(latitude: number, longitude: number): {
+  suggestedName: string;
+  suggestedCampusLabel: string;
+  formattedAddress: string;
+  nearestPresetId: string | null;
+  distanceToPresetMeters: number | null;
+  timezone: string;
+} {
+  let closest: (typeof KNOWN_COLLEGES_DIRECTORY)[number] | null = null;
+  let minDistance = Infinity;
+
+  for (const entry of KNOWN_COLLEGES_DIRECTORY) {
+    const dist = calculateDistanceMeters(latitude, longitude, entry.latitude, entry.longitude);
+    if (dist < minDistance) {
+      minDistance = dist;
+      closest = entry;
+    }
+  }
+
+  if (closest && minDistance <= 2500) {
+    const distRounded = Math.round(minDistance);
+    const label =
+      distRounded <= 80
+        ? closest.campusLabel
+        : `${distRounded}m from ${closest.campusLabel}`;
+    return {
+      suggestedName: closest.collegeName,
+      suggestedCampusLabel: label,
+      formattedAddress: closest.address,
+      nearestPresetId: closest.collegeId,
+      distanceToPresetMeters: distRounded,
+      timezone: closest.timezone,
+    };
+  }
+
+  const latDir = latitude >= 0 ? 'N' : 'S';
+  const lonDir = longitude >= 0 ? 'E' : 'W';
+  const coordLabel = `${Math.abs(latitude).toFixed(5)}°${latDir}, ${Math.abs(longitude).toFixed(5)}°${lonDir}`;
+
+  return {
+    suggestedName: 'Custom Selected College Campus',
+    suggestedCampusLabel: 'Custom Map Pin Boundary',
+    formattedAddress: `Pinned Campus Location (${coordLabel})`,
+    nearestPresetId: null,
+    distanceToPresetMeters: Number.isFinite(minDistance) ? Math.round(minDistance) : null,
+    timezone: 'Asia/Kolkata',
+  };
+}
+
+export interface GoogleMapsConfigDiagnostic {
+  status:
+    | 'READY'
+    | 'LOADING'
+    | 'MISSING_API_KEY'
+    | 'AUTH_OR_BILLING_ERROR'
+    | 'SCRIPT_LOAD_ERROR';
+  isInteractiveMapAvailable: boolean;
+  envVarName: 'VITE_GOOGLE_MAPS_API_KEY' | 'EXPO_PUBLIC_GOOGLE_MAPS_API_KEY';
+  errorCode: string | null;
+  title: string;
+  message: string;
+  requiredApis: string[];
+  remediationSteps: string[];
+}
+
+/**
+ * Evaluates the current Google Maps Platform credential and SDK loading state.
+ * Never invents keys or falls back to fake map graphics when credentials are missing or invalid.
+ */
+export function evaluateGoogleMapsConfigStatus(params: {
+  apiKey?: string | null;
+  sdkLoadingStatus?: 'LOADED' | 'LOADING' | 'AUTH_FAILURE' | 'FAILED' | 'NOT_LOADED' | string;
+  authFailureDetected?: boolean;
+  authErrorDetail?: string | null;
+  platform?: 'web' | 'android';
+}): GoogleMapsConfigDiagnostic {
+  const platform = params.platform ?? 'web';
+  const envVarName =
+    platform === 'android' ? 'EXPO_PUBLIC_GOOGLE_MAPS_API_KEY' : 'VITE_GOOGLE_MAPS_API_KEY';
+  const requiredApis =
+    platform === 'android'
+      ? ['Maps SDK for Android', 'Places API (New)', 'Geocoding API']
+      : ['Maps JavaScript API', 'Places API (New)', 'Geocoding API'];
+
+  const trimmedKey = (params.apiKey ?? '').trim();
+
+  if (
+    !trimmedKey ||
+    trimmedKey === 'MY_GOOGLE_MAPS_API_KEY' ||
+    trimmedKey === 'YOUR_API_KEY' ||
+    trimmedKey.length < 15
+  ) {
+    return {
+      status: 'MISSING_API_KEY',
+      isInteractiveMapAvailable: false,
+      envVarName,
+      errorCode: 'MAPS_API_KEY_MISSING',
+      title: 'Google Maps API Key Not Configured',
+      message: `${envVarName} is missing from the environment configuration. Live Google Maps tiles cannot be loaded until a valid Google Maps Platform API key is supplied.`,
+      requiredApis,
+      remediationSteps: [
+        `Set ${envVarName} in your environment (.env or AI Studio Secrets panel).`,
+        `Enable ${requiredApis.join(', ')} in your Google Cloud project and ensure billing is active.`,
+        platform === 'android'
+          ? 'Restrict the Android key to package com.campustrack.attendly and your SHA-1 signing certificate.'
+          : 'Restrict the browser key by HTTP referrer to your application origin.',
+      ],
+    };
+  }
+
+  if (params.authFailureDetected || params.sdkLoadingStatus === 'AUTH_FAILURE') {
+    return {
+      status: 'AUTH_OR_BILLING_ERROR',
+      isInteractiveMapAvailable: false,
+      envVarName,
+      errorCode: params.authErrorDetail || 'MAPS_AUTH_OR_BILLING_FAILURE',
+      title: 'Google Maps Platform Authentication or Billing Error',
+      message:
+        params.authErrorDetail ||
+        `Google Maps rejected the configured ${envVarName} (InvalidKeyMapError, ApiNotActivatedMapError, BillingNotEnabledMapError, or RefererNotAllowedMapError).`,
+      requiredApis,
+      remediationSteps: [
+        `Verify that ${envVarName} is a valid, active Google Cloud API key.`,
+        `Confirm that ${requiredApis.join(', ')} are enabled on the Google Cloud project.`,
+        'Ensure a valid Cloud Billing account is linked to the project.',
+        'Check HTTP referrer / Android package application restrictions in Google Cloud Console.',
+      ],
+    };
+  }
+
+  if (params.sdkLoadingStatus === 'FAILED') {
+    return {
+      status: 'SCRIPT_LOAD_ERROR',
+      isInteractiveMapAvailable: false,
+      envVarName,
+      errorCode: 'MAPS_SCRIPT_LOAD_FAILED',
+      title: 'Unable to Load Google Maps JavaScript SDK',
+      message:
+        'The browser could not load maps.googleapis.com. Check your network connection, firewall, or Content Security Policy.',
+      requiredApis,
+      remediationSteps: [
+        'Check network connectivity to https://maps.googleapis.com.',
+        `Verify ${envVarName} configuration and reload the Location Picker.`,
+      ],
+    };
+  }
+
+  if (params.sdkLoadingStatus === 'LOADING' || params.sdkLoadingStatus === 'NOT_LOADED') {
+    return {
+      status: 'LOADING',
+      isInteractiveMapAvailable: false,
+      envVarName,
+      errorCode: null,
+      title: 'Loading Google Maps Platform...',
+      message: 'Initializing Google Maps tiles, draggable marker, and geofence circle overlay.',
+      requiredApis,
+      remediationSteps: [],
+    };
+  }
+
+  return {
+    status: 'READY',
+    isInteractiveMapAvailable: true,
+    envVarName,
+    errorCode: null,
+    title: 'Google Maps Platform Active',
+    message: 'Live Google Maps tiles, Places search, and real-time geofence circle active.',
+    requiredApis,
+    remediationSteps: [],
+  };
+}
+
+export interface InteractiveMapPickerState {
+  cameraCenter: { lat: number; lng: number };
+  zoom: number;
+  selectedLat: number;
+  selectedLng: number;
+  radiusMeters: number;
+  locationSource: LocationSourceType;
+  configVersion: number;
+}
+
+export function createInitialMapPickerState(college: CollegeConfig): InteractiveMapPickerState {
+  return {
+    cameraCenter: { lat: college.latitude, lng: college.longitude },
+    zoom: 16,
+    selectedLat: college.latitude,
+    selectedLng: college.longitude,
+    radiusMeters: college.radiusMeters,
+    locationSource: college.locationSource || 'MAP_PIN',
+    configVersion: college.configVersion ?? 1,
+  };
+}
+
+/**
+ * Updates only the map camera viewport (pan / zoom).
+ * Crucial Requirement 7: Map panning or zooming alone MUST NEVER alter the selected/saved centre.
+ */
+export function applyCameraPanOrZoom(
+  state: InteractiveMapPickerState,
+  newCameraCenter: { lat: number; lng: number },
+  newZoom?: number
+): InteractiveMapPickerState {
+  return {
+    ...state,
+    cameraCenter: {
+      lat: Number(newCameraCenter.lat.toFixed(6)),
+      lng: Number(newCameraCenter.lng.toFixed(6)),
+    },
+    zoom: newZoom !== undefined ? Math.max(3, Math.min(21, newZoom)) : state.zoom,
+  };
+}
+
+/**
+ * Updates the selected geofence centre ONLY in response to an explicit user action:
+ * map tap, marker drag end, search result selection, manual coordinate apply, or current-location button.
+ */
+export function applyExplicitCenterSelection(
+  state: InteractiveMapPickerState,
+  params: {
+    latitude: number;
+    longitude: number;
+    source: LocationSourceType;
+    recenterCamera?: boolean;
+    zoom?: number;
+  }
+): { state: InteractiveMapPickerState; valid: boolean; error?: string } {
+  if (
+    Number.isNaN(params.latitude) ||
+    params.latitude < -90 ||
+    params.latitude > 90 ||
+    Number.isNaN(params.longitude) ||
+    params.longitude < -180 ||
+    params.longitude > 180
+  ) {
+    return {
+      state,
+      valid: false,
+      error: 'Coordinates must be within valid ranges: Latitude [-90, 90], Longitude [-180, 180].',
+    };
+  }
+
+  const lat = Number(params.latitude.toFixed(6));
+  const lng = Number(params.longitude.toFixed(6));
+
+  return {
+    valid: true,
+    state: {
+      ...state,
+      selectedLat: lat,
+      selectedLng: lng,
+      locationSource: params.source,
+      cameraCenter: params.recenterCamera ? { lat, lng } : state.cameraCenter,
+      zoom: params.zoom !== undefined ? Math.max(3, Math.min(21, params.zoom)) : state.zoom,
+    },
+  };
+}
+
+/**
+ * Updates and validates the geofence radius in metres (50m–2000m).
+ */
+export function applyGeofenceRadiusUpdate(
+  state: InteractiveMapPickerState,
+  rawRadiusMeters: number
+): { state: InteractiveMapPickerState; valid: boolean; error?: string } {
+  if (Number.isNaN(rawRadiusMeters)) {
+    return {
+      state,
+      valid: false,
+      error: 'Geofence radius must be a valid number in metres.',
+    };
+  }
+
+  const clamped = Math.max(50, Math.min(2000, Math.round(rawRadiusMeters)));
+  return {
+    valid: rawRadiusMeters >= 50 && rawRadiusMeters <= 2000,
+    error:
+      rawRadiusMeters < 50 || rawRadiusMeters > 2000
+        ? 'Geofence radius must be between 50m and 2000m.'
+        : undefined,
+    state: {
+      ...state,
+      radiusMeters: clamped,
+    },
+  };
+}
+
